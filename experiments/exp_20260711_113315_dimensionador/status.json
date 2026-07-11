@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "created_at": "2026-07-11T16:33:15.551109+00:00",
+  "started_at": "2026-07-11T16:33:15.611793+00:00",
+  "finished_at": "2026-07-11T16:36:42.502852+00:00",
+  "best": {
+    "epoch": 5,
+    "val_acc": 0.97033,
+    "val_loss": 0.09703
+  },
+  "final_test": {
+    "loss": 0.0734,
+    "acc": 0.9765
+  },
+  "error": null
+}
