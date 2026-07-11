@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "created_at": "2026-07-11T18:02:51.332128+00:00",
+  "started_at": null,
+  "finished_at": "2026-07-11T18:02:51.395649+00:00",
+  "best": null,
+  "final_test": null,
+  "error": "Traceback (most recent call last):\n  File \"C:\\Desarrollo\\sliding-window-NIST-ocr\\src\\swnist\\webapp\\manager.py\", line 42, in _run\n    TRAINERS[nn](exp_id, config, self.registry, stop_event)\n    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Desarrollo\\sliding-window-NIST-ocr\\src\\swnist\\training\\train_dimensionador.py\", line 46, in run_training\n    model = Dimensionador.from_config(config[\"model\"]).to(device)\n            ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"C:\\Desarrollo\\sliding-window-NIST-ocr\\src\\swnist\\models\\dimensionador.py\", line 46, in from_config\n    return cls(\n        window_size=config[\"window_size\"],\n    ...<2 lines>...\n        channels=tuple(config[\"channels\"]),\n    )\n  File \"C:\\Desarrollo\\sliding-window-NIST-ocr\\src\\swnist\\models\\dimensionador.py\", line 20, in __init__\n    c1, c2 = channels\n    ^^^^^^\nValueError: too many values to unpack (expected 2, got 3)\n"
+}

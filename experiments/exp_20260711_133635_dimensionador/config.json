@@ -1,0 +1,28 @@
+{
+  "nn": "dimensionador",
+  "dataset": {
+    "name": "mnist_windows",
+    "params": {
+      "window_size": 5,
+      "windows_per_image": 25
+    }
+  },
+  "model": {
+    "window_size": 5,
+    "feature_dim": 64,
+    "num_classes": 10,
+    "channels": [
+      32,
+      64
+    ]
+  },
+  "training": {
+    "epochs": 5,
+    "batch_size": 128,
+    "lr": 0.001,
+    "weight_decay": 0,
+    "seed": 42,
+    "val_fraction": 0.1,
+    "log_every": 50
+  }
+}

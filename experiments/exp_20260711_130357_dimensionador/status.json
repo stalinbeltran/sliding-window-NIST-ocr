@@ -1,0 +1,17 @@
+{
+  "status": "completed",
+  "created_at": "2026-07-11T18:03:57.441725+00:00",
+  "started_at": "2026-07-11T18:03:57.502316+00:00",
+  "finished_at": "2026-07-11T18:09:49.138921+00:00",
+  "best": {
+    "epoch": 5,
+    "val_acc": 0.98283,
+    "val_loss": 0.06421
+  },
+  "final_test": {
+    "loss": 0.04669,
+    "acc": 0.9842
+  },
+  "error": null,
+  "label": "Dim32_64_5epoch"
+}
