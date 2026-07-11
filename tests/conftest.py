@@ -59,7 +59,7 @@ def tmp_custom_store(tmp_path, monkeypatch):
 def dim_config(dataset_name="mnist_windows", dataset_params=None, epochs=1, **extra):
     params = dataset_params or {}
     # model.window_size debe reflejar la entrada real (regla de compatibilidad)
-    window = 28 if dataset_name == "mnist_full" else params.get("window_size", 14)
+    window = params.get("window_size", 28 if dataset_name == "mnist_full" else 14)
     return {
         "dataset": {"name": dataset_name, "params": params},
         "model": {"window_size": window, "feature_dim": 16, "num_classes": 10,

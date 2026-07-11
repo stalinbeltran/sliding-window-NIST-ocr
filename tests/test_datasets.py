@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from swnist.data.datasets import IMAGE_SIZE, MnistFull, MnistSlidingSequences, MnistWindows
-from swnist.data.registry import build_dataset, list_datasets
+from swnist.data.registry import build_dataset, effective_window_size, list_datasets
 from swnist.data.windows import extract_window, grid_positions, normalize_position
 
 
@@ -37,6 +37,20 @@ def test_mnist_full_item():
     img, label = ds[0]
     assert img.shape == (1, 28, 28)
     assert 0 <= label <= 9
+
+
+def test_mnist_full_windowed():
+    # mnist_full adaptado a otro tamaño de ventana: muestras = ventanas aleatorias,
+    # pero la muestra visible sigue siendo la imagen completa.
+    ds = MnistFull(train=True, seed=7, window_size=5, windows_per_image=3)
+    assert len(ds) == 3 * len(ds.base)
+    w, label = ds[10]
+    assert w.shape == (1, 5, 5)
+    full, label2 = ds.display_item(10)
+    assert full.shape == (1, 28, 28) and label == label2
+    # Determinista dado (seed, idx); misma lógica de ventanas que MnistWindows
+    ds2 = MnistWindows(train=True, seed=7, window_size=5, windows_per_image=3)
+    assert torch.equal(w, ds2[10][0])
 
 
 def test_mnist_windows_item_and_determinism():
@@ -76,10 +90,18 @@ def test_build_dataset_unknown_name():
 
 
 def test_build_dataset_rejects_params_of_other_dataset():
-    # Reproduce el bug original: mnist_full con params de mnist_windows
+    # mnist_full acepta params de ventana, pero no los de otros datasets (p. ej. stride)
     with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_full", {"window_size": 14, "windows_per_image": 4},
-                      train=True, seed=42)
+        build_dataset("mnist_full", {"stride": 7}, train=True, seed=42)
+
+
+def test_build_dataset_rejects_invalid_param_values():
+    with pytest.raises(ValueError, match="window_size debe ser"):
+        build_dataset("mnist_full", {"window_size": 0}, train=True, seed=42)
+    with pytest.raises(ValueError, match="window_size debe ser"):
+        build_dataset("mnist_windows", {"window_size": 29}, train=True, seed=42)
+    with pytest.raises(ValueError, match="windows_per_image debe ser"):
+        build_dataset("mnist_full", {"windows_per_image": 0}, train=True, seed=42)
 
 
 def test_build_dataset_valid_params():
@@ -87,3 +109,15 @@ def test_build_dataset_valid_params():
     w, _ = ds[0]
     assert w.shape == (1, 10, 10)
     assert isinstance(build_dataset("mnist_full", {}, train=True, seed=0)[0][0], torch.Tensor)
+    # Cualquier dataset se adapta al tamaño de ventana pedido
+    ds_full = build_dataset("mnist_full", {"window_size": 5, "windows_per_image": 100},
+                            train=True, seed=0)
+    assert ds_full[0][0].shape == (1, 5, 5)
+    assert len(ds_full) == 100 * len(ds_full.base)
+
+
+def test_effective_window_size_follows_params():
+    assert effective_window_size("mnist_full", {}) == 28
+    assert effective_window_size("mnist_full", {"window_size": 5}) == 5
+    assert effective_window_size("mnist_windows", {}) == 14
+    assert effective_window_size("mnist_sliding_sequences", {"window_size": 7}) == 7

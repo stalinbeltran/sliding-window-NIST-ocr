@@ -69,3 +69,15 @@ def test_catalog_integration_and_build(tmp_custom_store):
     # params desconocidos rechazados con mensaje claro
     with pytest.raises(ValueError, match="Parámetros no válidos"):
         data_registry.build_dataset("sub_windows", {"stride": 3}, train=True, seed=7)
+
+    # el catálogo expone los params efectivos del base como defaults del custom
+    assert entry["defaults"] == BASE["params"]
+
+    # cambiar windows_per_image invalidaría los índices guardados → rechazado con razón
+    with pytest.raises(ValueError, match="windows_per_image"):
+        data_registry.build_dataset("sub_windows", {"windows_per_image": 8},
+                                    train=True, seed=7)
+    # cambiar window_size sí es válido (los índices siguen apuntando a las mismas
+    # imágenes/ventanas base): así se re-entrena con otro tamaño de ventana
+    ds5 = data_registry.build_dataset("sub_windows", {"window_size": 5}, train=True, seed=7)
+    assert ds5[0][0].shape == (1, 5, 5)

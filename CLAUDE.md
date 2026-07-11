@@ -46,7 +46,9 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     experimento/evaluación (`src/swnist/validation.py`, usada por el manager) y la
     API responde 400 con un mensaje que explica el porqué y cómo corregirlo. Regla
     concreta: `model.window_size` del dimensionador debe coincidir con el tamaño de
-    entrada efectivo del dataset (`mnist_full` → 28); el frontend lo sincroniza solo.
+    entrada efectivo del dataset (`params.window_size` merged sobre los defaults);
+    el frontend lo sincroniza solo. También se validan los valores:
+    `window_size` ∈ [1, 28], `windows_per_image`/`stride` ≥ 1.
 14. **Re-entrenamiento**: `config.init_from = <exp_id>` continúa desde los pesos
     `best.pt` de un experimento de la misma NN; la arquitectura (`config.model`) la
     dicta el experimento origen (el manager la reemplaza al validar). El optimizador
@@ -76,6 +78,16 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     recorrido real). La UI (pestaña Probar) anima la ventana sobre el carácter y
     grafica la salida por paso. Modelos y datasets se cachean en
     `webapp/inference.py` (invalidar con `clear_caches()` al borrar/renombrar).
+19. **Ventana adaptable en cualquier dataset** (2026-07-11): todo dataset sirve de
+    base para entrenar con cualquier tamaño de ventana. `mnist_full` acepta
+    `window_size` (default 28 = imagen completa) y `windows_per_image` (default 1);
+    con `window_size < 28` produce ventanas aleatorias (misma lógica que
+    `mnist_windows`, que ahora es subclase de `MnistFull`), pero la muestra visible
+    sigue siendo la imagen completa (la UI anima la ventana encima). Los datasets
+    custom exponen como `defaults` los params efectivos de su base y admiten
+    sobrescribir `window_size` (re-entrenar las mismas muestras con otra ventana);
+    cambiar `windows_per_image` en un custom se rechaza (400) porque invalidaría
+    los índices guardados.
 
 ## Arquitectura
 
@@ -96,7 +108,8 @@ Dos redes neuronales:
   no da más espacio; el pooling adaptativo final mantiene la salida en 3×3. Lista
   inválida → 400 con razón antes de crear el experimento (2026-07-11).
 - Dataset por defecto del dimensionador en la web app: `mnist_full`
-  (`model.window_size=28`), definido en `nn_registry.py` (2026-07-11).
+  (`model.window_size=28`), definido en `nn_registry.py` (2026-07-11). `mnist_full`
+  admite `window_size`/`windows_per_image` para entrenar por ventanas (regla 19).
 
 ### 2. Secuenciador (NN recurrente / retroalimentada)
 - `src/swnist/models/secuenciador.py`

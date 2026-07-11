@@ -24,7 +24,8 @@ def _assert_completed(registry, exp_id, backups_root):
 
 
 @pytest.mark.parametrize("dataset,params", [
-    ("mnist_full", {}),  # escenario del bug original, con params correctos
+    ("mnist_full", {}),  # imagen completa (defaults)
+    ("mnist_full", {"window_size": 5, "windows_per_image": 2}),  # adaptado a ventanas
     ("mnist_windows", {"window_size": 14, "windows_per_image": 2}),
 ])
 def test_train_dimensionador(tmp_registry, tiny_datasets, tmp_path, dataset, params):

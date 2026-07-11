@@ -59,12 +59,13 @@ def test_api_experiment_not_found(client):
     assert c.get("/api/experiments/exp_inexistente").status_code == 404
 
 
-def test_api_original_bug_rejected_upfront(client):
-    """La config que falló en la UI (mnist_full con params de mnist_windows) ahora
-    se rechaza ANTES de crear el experimento, con la razón en el 400."""
+def test_api_foreign_params_rejected_upfront(client):
+    """Params ajenos al dataset se rechazan ANTES de crear el experimento, con la
+    razón en el 400. (El caso del bug original — mnist_full con window_size y
+    windows_per_image — ahora es válido: mnist_full acepta esos params.)"""
     c, _ = client
-    cfg = dim_config("mnist_full", {"window_size": 14, "windows_per_image": 4})
-    cfg["dataset"]["params"] = {"window_size": 14, "windows_per_image": 4}
+    cfg = dim_config("mnist_full", {})
+    cfg["dataset"]["params"] = {"stride": 7}
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 400
     assert "Parámetros no válidos" in r.json()["detail"]

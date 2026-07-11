@@ -5,7 +5,7 @@ NNS = {
         "description": "CNN que extrae características de una ventana de la imagen. "
                        "Se pre-entrena clasificando el dígito de origen de la ventana.",
         "defaults": {
-            "dataset": {"name": "mnist_full", "params": {}},
+            "dataset": {"name": "mnist_full", "params": {"window_size": 28, "windows_per_image": 1}},
             "model": {"window_size": 28, "feature_dim": 32, "num_classes": 10, "channels": [16, 32]},
             "training": {
                 "epochs": 5, "batch_size": 128, "lr": 0.001, "weight_decay": 0.0,

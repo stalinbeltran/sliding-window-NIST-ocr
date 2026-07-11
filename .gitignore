@@ -218,8 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # --- Proyecto sliding-window-NIST-ocr ---
-# Datos descargados (MNIST via torchvision)
-data/
+# Datos descargados (MNIST via torchvision) — solo el data/ de la raíz:
+# sin la barra inicial ignoraba también src/swnist/data/ (código fuente).
+/data/
 # Respaldos de experimentos (regla del proyecto: siempre se respaldan, git-ignored)
 backups/
 # Checkpoints de modelos (el registro config/métricas/estado sí se versiona)

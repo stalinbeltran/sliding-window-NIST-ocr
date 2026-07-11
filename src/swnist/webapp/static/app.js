@@ -106,10 +106,9 @@ let DATASETS = []; // datasets compatibles con la NN seleccionada (con sus defau
 let TRAIN_EXPS = []; // experimentos de la NN seleccionada (para init_from)
 
 function effectiveWindow(dsEntry, params) {
-  const baseName = dsEntry.custom ? dsEntry.base.name : dsEntry.name;
-  const merged = dsEntry.custom ? { ...dsEntry.base.params, ...params } : { ...params };
-  if (baseName === "mnist_full") return 28;
-  return merged.window_size ?? dsEntry.defaults.window_size ?? 14;
+  // Los defaults del catálogo ya incluyen window_size (los custom heredan los del base).
+  const merged = { ...dsEntry.defaults, ...params };
+  return merged.window_size ?? 28;
 }
 
 async function onNNChange() {
