@@ -7,6 +7,7 @@ experimento fallido.
 """
 
 from swnist.data import registry as data_registry
+from swnist.data.datasets import IMAGE_SIZE
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.nn_registry import NNS
 
@@ -110,6 +111,21 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
             raise ValueError(
                 f"{dim_id!r} no es un experimento de dimensionador.")
         _require_checkpoint(registry, dim_id, "Dimensionador")
+        dim_ws = int(dim_exp["config"]["model"]["window_size"])
+        if dim_ws >= IMAGE_SIZE:
+            raise ValueError(
+                f"El dimensionador {dim_id!r} se entrenó con ventana "
+                f"{dim_ws}×{dim_ws} (la imagen completa): la ventana deslizante "
+                f"no tendría dónde moverse y la secuencia colapsaría a un solo "
+                f"paso, que es justo lo que el secuenciador debe evitar. Entrena "
+                f"un dimensionador con model.window_size < {IMAGE_SIZE} (p. ej. "
+                f"14 con mnist_full y window_size=14) y selecciónalo aquí.")
+        # La ventana de la secuencia la dicta el dimensionador: se fija en la
+        # config para que quede registrado el valor realmente usado.
+        dataset_cfg = {**dataset_cfg,
+                       "params": {**(dataset_cfg.get("params") or {}),
+                                  "window_size": dim_ws}}
+        config["dataset"] = dataset_cfg
         if init_from:
             init_dim = init_exp["config"].get("dimensionador_experiment")
             init_dim_exp = _get_experiment(registry, init_dim, "Re-entrenamiento (init_from)")

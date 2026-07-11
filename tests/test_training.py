@@ -72,6 +72,35 @@ def test_secuenciador_requires_dimensionador(tmp_registry, tmp_eval_registry, ti
     assert tmp_registry.list_experiments() == []
 
 
+def test_secuenciador_rejects_full_image_dimensionador(tmp_registry, tmp_eval_registry):
+    """Un dimensionador de ventana 28 colapsaría la secuencia a 1 paso → 400 antes de crear."""
+    dim_id = tmp_registry.create_experiment("dimensionador", dim_config("mnist_full", {}))
+    ckpt = tmp_registry.checkpoints_dir(dim_id) / "best.pt"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    ckpt.touch()  # la validación solo comprueba existencia, no carga pesos
+
+    manager = TrainingManager(tmp_registry, tmp_eval_registry)
+    with pytest.raises(ValueError, match="un solo"):
+        manager.start("secuenciador", seq_config(dim_id))
+    assert [e["id"] for e in tmp_registry.list_experiments()] == [dim_id]
+
+
+def test_secuenciador_config_records_effective_window(tmp_registry):
+    """La config guardada refleja el window_size real (el del dimensionador)."""
+    from swnist.validation import validate_train_config
+
+    dim_id = tmp_registry.create_experiment(
+        "dimensionador", dim_config("mnist_windows", {"window_size": 14}))
+    ckpt = tmp_registry.checkpoints_dir(dim_id) / "best.pt"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    ckpt.touch()
+
+    cfg = seq_config(dim_id)
+    cfg["dataset"]["params"]["window_size"] = 5  # valor engañoso del formulario
+    final = validate_train_config("secuenciador", cfg, tmp_registry)
+    assert final["dataset"]["params"]["window_size"] == 14
+
+
 def test_retrain_continues_from_checkpoint(tmp_registry, tiny_datasets, tmp_path):
     """init_from carga los pesos del experimento origen antes de seguir entrenando."""
     import torch

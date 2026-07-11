@@ -48,7 +48,13 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     concreta: `model.window_size` del dimensionador debe coincidir con el tamaño de
     entrada efectivo del dataset (`params.window_size` merged sobre los defaults);
     el frontend lo sincroniza solo. También se validan los valores:
-    `window_size` ∈ [1, 28], `windows_per_image`/`stride` ≥ 1.
+    `window_size` ∈ [1, 28], `windows_per_image`/`stride` ≥ 1. El dimensionador
+    de un secuenciador debe tener `window_size` < 28: con ventana 28 el recorrido
+    colapsa a 1 solo paso y no hay secuenciación (400 con razón). La config del
+    secuenciador guarda en `dataset.params.window_size` el valor efectivo (el del
+    dimensionador), no el del formulario (bug detectado el 2026-07-11: un
+    secuenciador con dimensionador de ventana 28 "secuenciaba" en 1 paso aunque
+    la config dijera `window_size=5`).
 14. **Re-entrenamiento**: `config.init_from = <exp_id>` continúa desde los pesos
     `best.pt` de un experimento de la misma NN; la arquitectura (`config.model`) la
     dicta el experimento origen (el manager la reemplaza al validar). El optimizador
