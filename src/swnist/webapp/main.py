@@ -19,6 +19,15 @@ app = FastAPI(title="sliding-window-NIST-ocr")
 registry = ExperimentRegistry()
 manager = TrainingManager(registry)
 
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    """Evita que el navegador sirva frontend viejo tras actualizar el código."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 
