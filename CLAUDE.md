@@ -91,6 +91,12 @@ Dos redes neuronales:
 - Usa pooling adaptativo, por lo que acepta ventanas de cualquier tamaño, pero **el
   tamaño de ventana con el que se entrenó queda en su config** y el secuenciador lo
   reutiliza obligatoriamente.
+- `model.channels` es una **lista de longitud libre (≥1)**: un bloque conv
+  (Conv3×3 + ReLU + MaxPool2) por elemento. El MaxPool se omite cuando la ventana ya
+  no da más espacio; el pooling adaptativo final mantiene la salida en 3×3. Lista
+  inválida → 400 con razón antes de crear el experimento (2026-07-11).
+- Dataset por defecto del dimensionador en la web app: `mnist_full`
+  (`model.window_size=28`), definido en `nn_registry.py` (2026-07-11).
 
 ### 2. Secuenciador (NN recurrente / retroalimentada)
 - `src/swnist/models/secuenciador.py`

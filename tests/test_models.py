@@ -19,6 +19,25 @@ def test_dimensionador_accepts_any_window_size():
     assert m.features(torch.randn(2, 1, 28, 28)).shape == (2, 16)
 
 
+@pytest.mark.parametrize("channels", [(8,), (4, 8, 16), (4, 8, 16, 32, 64)])
+def test_dimensionador_variable_depth(channels):
+    # channels acepta cualquier número de bloques conv (≥1); con muchas capas el
+    # MaxPool se omite cuando la ventana ya no da más y el pooling adaptativo
+    # mantiene la salida estable.
+    m = Dimensionador(window_size=14, feature_dim=16, channels=channels)
+    x = torch.randn(2, 1, 14, 14)
+    assert m.features(x).shape == (2, 16)
+    assert m(x).shape == (2, 10)
+    assert m.config["channels"] == list(channels)
+    m2 = Dimensionador.from_config(m.config)
+    assert m2.config == m.config
+
+
+def test_dimensionador_rejects_empty_channels():
+    with pytest.raises(ValueError):
+        Dimensionador(window_size=14, channels=())
+
+
 def test_dimensionador_from_config_roundtrip():
     m = Dimensionador(window_size=10, feature_dim=8, channels=(4, 8))
     m2 = Dimensionador.from_config(m.config)

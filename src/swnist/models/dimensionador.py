@@ -14,29 +14,36 @@ class Dimensionador(nn.Module):
         window_size: int = 14,
         feature_dim: int = 32,
         num_classes: int = 10,
-        channels: tuple[int, int] = (16, 32),
+        channels: tuple[int, ...] = (16, 32),
     ):
         super().__init__()
-        c1, c2 = channels
+        channels = tuple(int(c) for c in channels)
+        if not channels or any(c <= 0 for c in channels):
+            raise ValueError(
+                f"model.channels debe ser una lista con al menos un entero positivo "
+                f"(un canal por bloque convolucional); recibido: {list(channels)!r}.")
         self.config = {
             "window_size": window_size,
             "feature_dim": feature_dim,
             "num_classes": num_classes,
-            "channels": [c1, c2],
+            "channels": list(channels),
         }
-        self.conv = nn.Sequential(
-            nn.Conv2d(1, c1, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            nn.Conv2d(c1, c2, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            # Salida independiente del tamaño de ventana:
-            nn.AdaptiveAvgPool2d(3),
-        )
+        layers = []
+        in_ch, size = 1, window_size
+        for c in channels:
+            layers += [nn.Conv2d(in_ch, c, kernel_size=3, padding=1), nn.ReLU(inplace=True)]
+            # MaxPool solo mientras quede espacio (con muchas capas la ventana
+            # llegaría a 0); el pooling adaptativo final fija la salida en 3×3.
+            if size >= 2:
+                layers.append(nn.MaxPool2d(2))
+                size //= 2
+            in_ch = c
+        # Salida independiente del tamaño de ventana:
+        layers.append(nn.AdaptiveAvgPool2d(3))
+        self.conv = nn.Sequential(*layers)
         self.feature_head = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(c2 * 9, feature_dim),
+            nn.Linear(channels[-1] * 9, feature_dim),
             nn.ReLU(inplace=True),
         )
         self.classifier = nn.Linear(feature_dim, num_classes)

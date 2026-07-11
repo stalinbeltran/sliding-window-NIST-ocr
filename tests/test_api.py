@@ -80,6 +80,16 @@ def test_api_window_mismatch_rejected_with_reason(client):
     assert "Medidas incompatibles" in r.json()["detail"]
 
 
+def test_api_invalid_channels_rejected_with_reason(client):
+    """channels vacío o con valores no positivos → 400 antes de crear el experimento."""
+    c, _ = client
+    cfg = dim_config("mnist_full", {})
+    cfg["model"]["channels"] = []
+    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
+    assert r.status_code == 400
+    assert "model.channels" in r.json()["detail"]
+
+
 def test_api_full_training_flow(client):
     """Entrenamiento completo vía API: mnist_full con params correctos."""
     c, manager = client

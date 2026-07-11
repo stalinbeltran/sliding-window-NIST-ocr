@@ -63,9 +63,10 @@ def test_mnist_sliding_sequences_item():
 
 
 def test_list_datasets_filters_by_nn():
+    # Solo los builtin: la lista real puede incluir datasets custom del usuario.
     for d in list_datasets("dimensionador"):
         assert "dimensionador" in d["compatible_with"]
-    seq = [d["name"] for d in list_datasets("secuenciador")]
+    seq = [d["name"] for d in list_datasets("secuenciador") if not d["custom"]]
     assert seq == ["mnist_sliding_sequences"]
 
 

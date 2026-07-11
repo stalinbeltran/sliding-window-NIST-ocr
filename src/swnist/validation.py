@@ -77,6 +77,14 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
     _check_dataset_for_nn(nn, dataset_cfg)
 
     if nn == "dimensionador":
+        channels = (config.get("model") or {}).get("channels")
+        if channels is not None and (
+                not isinstance(channels, (list, tuple)) or not channels
+                or any(not isinstance(c, int) or c <= 0 for c in channels)):
+            raise ValueError(
+                f"model.channels debe ser una lista con al menos un entero positivo "
+                f"(un canal por bloque convolucional, p. ej. [16, 32, 64]); "
+                f"recibido: {channels!r}.")
         ws_model = _model_window(config)
         ws_data = data_registry.effective_window_size(
             dataset_cfg["name"], dataset_cfg.get("params", {}) or {})
