@@ -172,4 +172,4 @@ def run_training(exp_id: str, config: dict, registry: ExperimentRegistry, stop_e
                            final_test={"loss": round(test["loss"], 5),
                                        "acc": round(test["acc"], 5),
                                        "per_step_acc": test["per_step_acc"]})
-    backup_experiment(exp_id)
+    backup_experiment(exp_id, experiments_root=registry.root)

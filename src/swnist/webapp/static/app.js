@@ -77,17 +77,16 @@ async function loadNNs() {
   await onNNChange();
 }
 
+let DATASETS = []; // datasets compatibles con la NN seleccionada (con sus defaults)
+
 async function onNNChange() {
   const nn = $("nn-select").value;
   const spec = NNS.find((n) => n.name === nn);
   $("nn-description").textContent = spec.description;
 
-  const datasets = await api(`/api/datasets?nn=${nn}`);
+  DATASETS = await api(`/api/datasets?nn=${nn}`);
   const dsel = $("dataset-select");
-  dsel.innerHTML = datasets
-    .map((d) => `<option value="${d.name}" data-desc="${d.description}">${d.name}</option>`)
-    .join("");
-  onDatasetChange();
+  dsel.innerHTML = DATASETS.map((d) => `<option value="${d.name}">${d.name}</option>`).join("");
 
   const config = JSON.parse(JSON.stringify(spec.defaults));
   const isSeq = nn === "secuenciador";
@@ -100,15 +99,28 @@ async function onNNChange() {
       : `<option value="">— entrena primero un dimensionador —</option>`;
     config.dimensionador_experiment = dsel2.value || null;
   }
+  // Preseleccionar en el desplegable el dataset que trae la config por defecto,
+  // para que ambos queden siempre en sincronía.
+  if (config.dataset && DATASETS.some((d) => d.name === config.dataset.name)) {
+    dsel.value = config.dataset.name;
+  }
   $("config-json").value = JSON.stringify(config, null, 2);
+  onDatasetChange();
 }
 
 function onDatasetChange() {
-  const opt = $("dataset-select").selectedOptions[0];
-  $("dataset-description").textContent = opt ? opt.dataset.desc : "";
+  const name = $("dataset-select").value;
+  const spec = DATASETS.find((d) => d.name === name);
+  $("dataset-description").textContent = spec ? spec.description : "";
+  if (!spec) return;
   try {
     const config = JSON.parse($("config-json").value || "{}");
-    if (config.dataset) { config.dataset.name = opt.value; $("config-json").value = JSON.stringify(config, null, 2); }
+    if (config.dataset) {
+      // Sincronizar nombre Y parámetros: cada dataset acepta parámetros distintos.
+      config.dataset.name = spec.name;
+      config.dataset.params = JSON.parse(JSON.stringify(spec.defaults));
+      $("config-json").value = JSON.stringify(config, null, 2);
+    }
   } catch { /* config siendo editada a mano */ }
 }
 
@@ -119,7 +131,7 @@ async function startTraining() {
   try { config = JSON.parse($("config-json").value); }
   catch (e) { msg.textContent = "JSON inválido: " + e.message; return; }
   const nn = $("nn-select").value;
-  config.dataset.name = $("dataset-select").value;
+  // La config JSON es la fuente de verdad (el desplegable ya la mantiene en sincronía).
   if (nn === "secuenciador") config.dimensionador_experiment = $("dim-exp-select").value || null;
   try {
     const res = await api("/api/train", {

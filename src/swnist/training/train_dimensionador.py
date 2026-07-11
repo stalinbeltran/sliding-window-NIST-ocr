@@ -101,4 +101,4 @@ def run_training(exp_id: str, config: dict, registry: ExperimentRegistry, stop_e
 
     registry.mark_finished(exp_id, status="stopped" if stopped else "completed",
                            final_test={"loss": round(test_loss, 5), "acc": round(test_acc, 5)})
-    backup_experiment(exp_id)
+    backup_experiment(exp_id, experiments_root=registry.root)

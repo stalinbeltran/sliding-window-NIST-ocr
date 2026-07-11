@@ -32,6 +32,15 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
    Claude para depurar.
 10. **Idioma**: el usuario se comunica en español; la UI y la documentación de alto nivel
     van en español. El código (identificadores, docstrings técnicos) puede ir en inglés.
+11. **Tests**: hay suite en `tests/` (`.\.venv\Scripts\python.exe -m pytest`, deps con
+    `pip install -e .[dev]`). Correrla antes de cada commit que toque código. Los tests
+    usan registro/backups en directorio temporal y datasets reducidos (no ensucian
+    `experiments/` ni `backups/`).
+12. **Sincronía dataset↔params**: cada dataset acepta solo sus propios parámetros
+    (validado en `build_dataset` con mensaje claro). El frontend reemplaza
+    `config.dataset.params` por los defaults del dataset al cambiar la selección
+    (bug corregido el 2026-07-11: elegir `mnist_full` dejaba params de `mnist_windows`
+    y reventaba con TypeError).
 
 ## Arquitectura
 
@@ -87,6 +96,8 @@ src/swnist/
     main.py                ← FastAPI: API + estáticos
     manager.py             ← jobs de entrenamiento en hilos, con stop
     static/                ← index.html, app.js, style.css (sin CDNs)
+tests/                     ← pytest: datasets, modelos, entrenamiento e2e, API (con la
+                             reproducción del bug de params de dataset)
 experiments/               ← registro versionado (config/métricas/estado por experimento)
                              * los checkpoints (experiments/*/checkpoints/) van git-ignored
 backups/                   ← git-ignored, copia íntegra de cada experimento
