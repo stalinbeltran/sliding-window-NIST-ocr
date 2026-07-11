@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sliding-window NIST OCR — Entrenamiento</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>sliding-window NIST OCR</h1>
+    <p>Entrenamiento del <b>dimensionador</b> (CNN) y el <b>secuenciador</b> (RNN retroalimentada)</p>
+  </header>
+
+  <main>
+    <section class="panel" id="panel-train">
+      <h2>Nuevo entrenamiento</h2>
+
+      <label for="nn-select">Red neuronal</label>
+      <select id="nn-select"></select>
+      <p class="hint" id="nn-description"></p>
+
+      <label for="dataset-select">Dataset (compatibles con la NN seleccionada)</label>
+      <select id="dataset-select"></select>
+      <p class="hint" id="dataset-description"></p>
+
+      <div id="dim-exp-row" hidden>
+        <label for="dim-exp-select">Dimensionador entrenado (experimento)</label>
+        <select id="dim-exp-select"></select>
+      </div>
+
+      <label for="config-json">Configuración (editable)</label>
+      <textarea id="config-json" rows="16" spellcheck="false"></textarea>
+
+      <button id="btn-train">Iniciar entrenamiento</button>
+      <p id="train-msg" class="hint"></p>
+    </section>
+
+    <section class="panel" id="panel-experiments">
+      <h2>Experimentos</h2>
+      <table id="exp-table">
+        <thead>
+          <tr><th>Id</th><th>Estado</th><th>Mejor val_acc</th><th>Test acc</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="panel" id="panel-detail" hidden>
+      <h2 id="detail-title"></h2>
+      <div id="detail-status"></div>
+      <div class="charts">
+        <div>
+          <h3>Pérdida (por época)</h3>
+          <canvas id="chart-loss" width="460" height="260"></canvas>
+        </div>
+        <div>
+          <h3>Accuracy (por época)</h3>
+          <canvas id="chart-acc" width="460" height="260"></canvas>
+        </div>
+        <div>
+          <h3>Pérdida por lote (época actual)</h3>
+          <canvas id="chart-batch" width="460" height="260"></canvas>
+        </div>
+        <div id="per-step-box" hidden>
+          <h3>Accuracy por paso de la secuencia (val)</h3>
+          <canvas id="chart-step" width="460" height="260"></canvas>
+        </div>
+      </div>
+      <details>
+        <summary>Configuración del experimento</summary>
+        <pre id="detail-config"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
