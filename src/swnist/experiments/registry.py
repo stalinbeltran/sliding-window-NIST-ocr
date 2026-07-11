@@ -13,6 +13,7 @@ CLI:
 """
 
 import json
+import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,6 +82,41 @@ class ExperimentRegistry:
 
     def checkpoints_dir(self, exp_id: str) -> Path:
         return self.root / exp_id / "checkpoints"
+
+    # ---------- CRUD ----------
+
+    def set_label(self, exp_id: str, label: str) -> dict:
+        """Alias visible del experimento. El id no se renombra porque otros
+        experimentos (secuenciador→dimensionador) lo referencian por id."""
+        self.get_experiment(exp_id)  # FileNotFoundError si no existe
+        return self.update_status(exp_id, label=label)
+
+    def referencing_experiments(self, exp_id: str) -> list[str]:
+        """Experimentos cuya config referencia a `exp_id` como dimensionador."""
+        return [e["id"] for e in self.list_experiments()
+                if e["config"].get("dimensionador_experiment") == exp_id]
+
+    def delete_experiment(self, exp_id: str) -> None:
+        d = self.root / exp_id
+        if not (d / "config.json").exists():
+            raise FileNotFoundError(f"Experimento no encontrado: {exp_id!r}")
+        shutil.rmtree(d)
+
+    def copy_experiment(self, exp_id: str) -> str:
+        """Duplica un experimento (config, métricas y checkpoints) con id nuevo."""
+        src = self.root / exp_id
+        if not (src / "config.json").exists():
+            raise FileNotFoundError(f"Experimento no encontrado: {exp_id!r}")
+        nn = json.loads((src / "config.json").read_text(encoding="utf-8")).get("nn", "nn")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_id = f"exp_{ts}_{nn}"
+        suffix = 1
+        while (self.root / new_id).exists():
+            new_id = f"exp_{ts}_{nn}_{suffix}"
+            suffix += 1
+        shutil.copytree(src, self.root / new_id)
+        self.update_status(new_id, label=f"copia de {exp_id}")
+        return new_id
 
     # ---------- lectura ----------
 

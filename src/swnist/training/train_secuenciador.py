@@ -21,11 +21,14 @@ from swnist.experiments.registry import ExperimentRegistry
 from swnist.models.dimensionador import Dimensionador
 from swnist.models.secuenciador import Secuenciador
 from swnist.repro import set_seed
-from .common import get_device, make_loaders, save_checkpoint
+from .common import get_device, load_init_weights, make_loaders, save_checkpoint
 
 
 def load_dimensionador(registry: ExperimentRegistry, exp_id: str, device) -> Dimensionador:
     ckpt_path = registry.checkpoints_dir(exp_id) / "best.pt"
+    if not ckpt_path.exists():
+        raise ValueError(f"El dimensionador {exp_id!r} no tiene checkpoint best.pt "
+                         f"(¿experimento incompleto o eliminado?). Elige otro.")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model = Dimensionador.from_config(ckpt["model_config"]).to(device)
     model.load_state_dict(ckpt["model_state"])
@@ -76,6 +79,8 @@ def evaluate(seq_model, dim_model, loader, device, loss_mode, freeze) -> dict:
         step_correct = (preds == labels.unsqueeze(1)).sum(0)  # (T,)
         per_step_correct = step_correct if per_step_correct is None else per_step_correct + step_correct
         n += labels.numel()
+    if n == 0:  # split de val vacío (dataset minúsculo)
+        return {"loss": 0.0, "acc": 0.0, "per_step_acc": []}
     return {
         "loss": total_loss / n_batches,
         "acc": correct_final / n,
@@ -105,6 +110,8 @@ def run_training(exp_id: str, config: dict, registry: ExperimentRegistry, stop_e
     seq_model = Secuenciador(
         feature_dim=dim_model.config["feature_dim"], **config["model"]
     ).to(device)
+    if config.get("init_from"):
+        load_init_weights(seq_model, registry, config["init_from"], device)
     params = list(seq_model.parameters()) + ([] if freeze else list(dim_model.parameters()))
     optimizer = torch.optim.Adam(params, lr=tr["lr"], weight_decay=tr["weight_decay"])
     criterion = nn.CrossEntropyLoss()

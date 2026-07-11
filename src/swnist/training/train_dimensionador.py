@@ -15,7 +15,7 @@ from swnist.experiments.backup import backup_experiment
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.models.dimensionador import Dimensionador
 from swnist.repro import set_seed
-from .common import get_device, make_loaders, save_checkpoint
+from .common import get_device, load_init_weights, make_loaders, save_checkpoint
 
 
 @torch.no_grad()
@@ -29,6 +29,8 @@ def evaluate(model, loader, device) -> tuple[float, float]:
         total_loss += criterion(logits, y).item()
         correct += (logits.argmax(1) == y).sum().item()
         n += y.numel()
+    if n == 0:  # split de val vacío (dataset minúsculo)
+        return 0.0, 0.0
     return total_loss / n, correct / n
 
 
@@ -42,6 +44,8 @@ def run_training(exp_id: str, config: dict, registry: ExperimentRegistry, stop_e
     train_loader, val_loader = make_loaders(dataset, tr["val_fraction"], tr["batch_size"], gen)
 
     model = Dimensionador.from_config(config["model"]).to(device)
+    if config.get("init_from"):
+        load_init_weights(model, registry, config["init_from"], device)
     optimizer = torch.optim.Adam(model.parameters(), lr=tr["lr"], weight_decay=tr["weight_decay"])
     criterion = nn.CrossEntropyLoss()
 

@@ -9,3 +9,5 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENTS_DIR = ROOT / "experiments"
 BACKUPS_DIR = ROOT / "backups"
 DATA_DIR = ROOT / "data"
+EVALUATIONS_DIR = ROOT / "evaluations"
+CUSTOM_DATASETS_DIR = ROOT / "custom_datasets"

@@ -63,15 +63,30 @@ def test_sequence_loss_modes():
         sequence_loss(logits, labels, "otro", criterion)
 
 
-def test_secuenciador_requires_dimensionador(tmp_registry, tiny_datasets):
-    """Sin dimensionador_experiment el experimento falla con mensaje claro."""
-    manager = TrainingManager(tmp_registry)
-    cfg = seq_config(dim_exp_id=None)
-    exp_id = manager.start("secuenciador", cfg)
-    manager.jobs[exp_id]["thread"].join(timeout=120)
-    status = tmp_registry.get_experiment(exp_id)["status"]
-    assert status["status"] == "failed"
-    assert "dimensionador_experiment" in status["error"]
+def test_secuenciador_requires_dimensionador(tmp_registry, tmp_eval_registry, tiny_datasets):
+    """Sin dimensionador_experiment se rechaza antes de crear el experimento."""
+    manager = TrainingManager(tmp_registry, tmp_eval_registry)
+    with pytest.raises(ValueError, match="dimensionador_experiment"):
+        manager.start("secuenciador", seq_config(dim_exp_id=None))
+    assert tmp_registry.list_experiments() == []
+
+
+def test_retrain_continues_from_checkpoint(tmp_registry, tiny_datasets, tmp_path):
+    """init_from carga los pesos del experimento origen antes de seguir entrenando."""
+    import torch
+    cfg = dim_config()
+    exp_id = tmp_registry.create_experiment("dimensionador", cfg)
+    train_dim(exp_id, cfg, tmp_registry)
+
+    cfg2 = dim_config(**{"init_from": exp_id})
+    exp2 = tmp_registry.create_experiment("dimensionador", cfg2)
+    train_dim(exp2, cfg2, tmp_registry)
+    _assert_completed(tmp_registry, exp2, tmp_path / "backups")
+
+    # el último checkpoint del re-entrenamiento parte de pesos del origen (no aleatorios):
+    orig = torch.load(tmp_registry.checkpoints_dir(exp_id) / "best.pt", weights_only=False)
+    cont = torch.load(tmp_registry.checkpoints_dir(exp2) / "best.pt", weights_only=False)
+    assert orig["model_config"] == cont["model_config"]
 
 
 def test_manager_rejects_unknown_nn(tmp_registry):

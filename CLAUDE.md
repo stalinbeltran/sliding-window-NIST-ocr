@@ -41,6 +41,41 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     `config.dataset.params` por los defaults del dataset al cambiar la selección
     (bug corregido el 2026-07-11: elegir `mnist_full` dejaba params de `mnist_windows`
     y reventaba con TypeError).
+13. **Validación previa con razón**: toda restricción de compatibilidad
+    (NN↔dataset, tamaños de ventana, re-entrenamiento) se valida ANTES de crear el
+    experimento/evaluación (`src/swnist/validation.py`, usada por el manager) y la
+    API responde 400 con un mensaje que explica el porqué y cómo corregirlo. Regla
+    concreta: `model.window_size` del dimensionador debe coincidir con el tamaño de
+    entrada efectivo del dataset (`mnist_full` → 28); el frontend lo sincroniza solo.
+14. **Re-entrenamiento**: `config.init_from = <exp_id>` continúa desde los pesos
+    `best.pt` de un experimento de la misma NN; la arquitectura (`config.model`) la
+    dicta el experimento origen (el manager la reemplaza al validar). El optimizador
+    parte de cero.
+15. **Evaluaciones**: se lanzan desde la web app (pestaña Probar) sobre cualquier NN
+    entrenada + dataset compatible + split (train/test) + límite opcional. Registro
+    en `evaluations/<eval_id>/` (config.json, status.json con summary y matriz de
+    confusión, results.jsonl por muestra con label/pred/conf/margin — el jsonl va
+    git-ignored). `margin = p1 − p2`; "ambigua" = margin < umbral (0.2 por defecto).
+    API: `POST/GET /api/evaluations`, `GET /api/evaluations/<id>/results` (filtros
+    all|correct|failed|ambiguous, label, pred, paginado, miniaturas PNG base64).
+16. **Datasets custom**: subconjuntos filtrados de una evaluación guardados en
+    `custom_datasets/<nombre>.json` (versionado: base + índices reproducibles;
+    nombre default automático y modificable). Semántica en `build_dataset`:
+    `train=True` → el subconjunto; `train=False` → test completo del base. Heredan
+    la compatibilidad del base y sirven para entrenar y evaluar. CRUD completo por
+    API/UI; renombrar/eliminar se bloquea (409 con razón) si un experimento los
+    referencia por nombre.
+17. **CRUD de experimentos**: renombrar es un alias (`status.label`; el id nunca
+    cambia porque otros experimentos lo referencian por id), duplicar copia el
+    directorio completo con id nuevo, eliminar se bloquea si el experimento corre o
+    si un secuenciador lo usa como dimensionador.
+18. **Inspección de muestras**: `GET /api/datasets/<name>/samples` (miniaturas) y
+    `POST /api/predict` (predicción de una muestra + `trace` paso a paso del
+    deslizamiento: posiciones de la ventana y probs por paso; para el dimensionador
+    se desliza su ventana sobre la imagen completa, para el secuenciador es su
+    recorrido real). La UI (pestaña Probar) anima la ventana sobre el carácter y
+    grafica la salida por paso. Modelos y datasets se cachean en
+    `webapp/inference.py` (invalidar con `clear_caches()` al borrar/renombrar).
 
 ## Arquitectura
 
@@ -78,28 +113,37 @@ scripts/run_webapp.py      ← lanza la web app (uvicorn, puerto 8000)
 src/swnist/
   repro.py                 ← semillas y captura de entorno
   nn_registry.py           ← catálogo de NNs entrenables + configs por defecto
+  validation.py            ← compatibilidad NN↔dataset↔checkpoint (razones claras, 400)
   data/
     windows.py             ← utilidades de ventana deslizante (posiciones, extracción)
-    datasets.py            ← MnistFull, MnistWindows, MnistSlidingSequences
-    registry.py            ← catálogo de datasets + compatibilidad por NN
+    datasets.py            ← MnistFull, MnistWindows, MnistSlidingSequences (+ display_item)
+    custom.py              ← datasets custom: CustomDatasetStore (CRUD) + CustomSubset
+    registry.py            ← catálogo de datasets (builtin+custom) + compatibilidad por NN
   models/
     dimensionador.py
     secuenciador.py
   training/
-    common.py              ← split train/val, loaders reproducibles, evaluación
+    common.py              ← split train/val, loaders reproducibles, checkpoints, init_from
     train_dimensionador.py
     train_secuenciador.py
+  evaluation/
+    registry.py            ← registro de evaluaciones + filtros de resultados
+    runner.py              ← aplica una NN entrenada a un dataset, resultados por muestra
   experiments/
-    registry.py            ← crear/listar/leer experimentos, log de métricas
+    registry.py            ← crear/listar/leer experimentos, métricas, CRUD (label/copy/delete)
     backup.py              ← respaldo a backups/ (git-ignored)
   webapp/
     main.py                ← FastAPI: API + estáticos
-    manager.py             ← jobs de entrenamiento en hilos, con stop
-    static/                ← index.html, app.js, style.css (sin CDNs)
-tests/                     ← pytest: datasets, modelos, entrenamiento e2e, API (con la
-                             reproducción del bug de params de dataset)
+    manager.py             ← jobs (entrenamientos y evaluaciones) en hilos, con stop
+    inference.py           ← miniaturas PNG, predict y trace (con caché de modelos/datasets)
+    static/                ← index.html, app.js, style.css (sin CDNs; pestañas
+                             Entrenar / Probar / Datasets)
+tests/                     ← pytest: datasets (builtin y custom), modelos, entrenamiento
+                             e2e, re-entrenamiento, evaluaciones y API completa
 experiments/               ← registro versionado (config/métricas/estado por experimento)
                              * los checkpoints (experiments/*/checkpoints/) van git-ignored
+evaluations/               ← registro de evaluaciones (results.jsonl git-ignored)
+custom_datasets/           ← datasets custom versionados (base + índices)
 backups/                   ← git-ignored, copia íntegra de cada experimento
 data/                      ← git-ignored, descarga de MNIST (torchvision)
 ```
@@ -127,7 +171,11 @@ Los ids tienen la forma `exp_YYYYMMDD_HHMMSS_<nn>`.
 ```
 
 Flujo típico: entrenar primero un **dimensionador** desde la web app; luego entrenar un
-**secuenciador** seleccionando ese experimento de dimensionador en el formulario.
+**secuenciador** seleccionando ese experimento de dimensionador en el formulario. En la
+pestaña **Probar**: evaluar cualquier NN entrenada sobre un dataset/split, explorar las
+muestras (miniaturas; click → predicción con animación del deslizamiento y gráfica de la
+salida por paso), filtrar aciertos/fallos/ambiguos y guardar el filtro como dataset
+custom para re-entrenar (`init_from`) o volver a evaluar.
 
 ## Convenciones de entrenamiento
 

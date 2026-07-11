@@ -1,4 +1,5 @@
-"""Tests de la API web (TestClient), incluida la reproducción del bug original."""
+"""Tests de la API web (TestClient), incluido el flujo completo de pruebas:
+evaluación, miniaturas, filtros, datasets custom y CRUD de experimentos."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,20 +7,31 @@ from fastapi.testclient import TestClient
 import swnist.webapp.main as main
 from swnist.webapp.manager import TrainingManager
 
-from conftest import dim_config
+from conftest import dim_config, seq_config
 
 
 @pytest.fixture
-def client(tmp_registry, tiny_datasets, monkeypatch):
-    manager = TrainingManager(tmp_registry)
+def client(tmp_registry, tmp_eval_registry, tmp_custom_store, tiny_datasets, monkeypatch):
+    manager = TrainingManager(tmp_registry, tmp_eval_registry)
     monkeypatch.setattr(main, "registry", tmp_registry)
+    monkeypatch.setattr(main, "eval_registry", tmp_eval_registry)
     monkeypatch.setattr(main, "manager", manager)
     return TestClient(main.app), manager
 
 
-def _wait(manager, exp_id, timeout=300):
-    manager.jobs[exp_id]["thread"].join(timeout=timeout)
-    assert not manager.jobs[exp_id]["thread"].is_alive(), "el entrenamiento no terminó a tiempo"
+def _wait(manager, job_id, timeout=300):
+    manager.jobs[job_id]["thread"].join(timeout=timeout)
+    assert not manager.jobs[job_id]["thread"].is_alive(), "el trabajo no terminó a tiempo"
+
+
+def _train(c, manager, nn="dimensionador", cfg=None):
+    r = c.post("/api/train", json={"nn": nn, "config": cfg or dim_config()})
+    assert r.status_code == 200, r.json()
+    exp_id = r.json()["experiment_id"]
+    _wait(manager, exp_id)
+    info = c.get(f"/api/experiments/{exp_id}").json()
+    assert info["status"]["status"] == "completed", info["status"]["error"]
+    return exp_id
 
 
 def test_api_nns(client):
@@ -47,32 +59,31 @@ def test_api_experiment_not_found(client):
     assert c.get("/api/experiments/exp_inexistente").status_code == 404
 
 
-def test_api_original_bug_now_fails_clearly(client):
-    """La config exacta que falló en la UI: mnist_full con params de mnist_windows.
-
-    Ya no debe producir un TypeError críptico sino un ValueError explicativo.
-    """
-    c, manager = client
+def test_api_original_bug_rejected_upfront(client):
+    """La config que falló en la UI (mnist_full con params de mnist_windows) ahora
+    se rechaza ANTES de crear el experimento, con la razón en el 400."""
+    c, _ = client
     cfg = dim_config("mnist_full", {"window_size": 14, "windows_per_image": 4})
+    cfg["dataset"]["params"] = {"window_size": 14, "windows_per_image": 4}
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
-    assert r.status_code == 200
-    exp_id = r.json()["experiment_id"]
-    _wait(manager, exp_id)
-    status = c.get(f"/api/experiments/{exp_id}").json()["status"]
-    assert status["status"] == "failed"
-    assert "Parámetros no válidos" in status["error"]
-    assert "TypeError" not in status["error"]
+    assert r.status_code == 400
+    assert "Parámetros no válidos" in r.json()["detail"]
+
+
+def test_api_window_mismatch_rejected_with_reason(client):
+    """Entrenar con model.window_size distinto a la entrada del dataset → 400 claro."""
+    c, _ = client
+    cfg = dim_config("mnist_full", {})
+    cfg["model"]["window_size"] = 10  # entradas 28×28 con modelo declarado 10×10
+    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
+    assert r.status_code == 400
+    assert "Medidas incompatibles" in r.json()["detail"]
 
 
 def test_api_full_training_flow(client):
     """Entrenamiento completo vía API: mnist_full con params correctos."""
     c, manager = client
-    r = c.post("/api/train", json={"nn": "dimensionador", "config": dim_config("mnist_full", {})})
-    exp_id = r.json()["experiment_id"]
-    _wait(manager, exp_id)
-
-    info = c.get(f"/api/experiments/{exp_id}").json()
-    assert info["status"]["status"] == "completed", info["status"]["error"]
+    exp_id = _train(c, manager, cfg=dim_config("mnist_full", {}))
 
     metrics = c.get(f"/api/experiments/{exp_id}/metrics").json()
     assert any(m["type"] == "epoch" for m in metrics)
@@ -82,3 +93,156 @@ def test_api_full_training_flow(client):
 
     # detener un experimento ya terminado responde stopped=false
     assert c.post(f"/api/experiments/{exp_id}/stop").json() == {"stopped": False}
+
+
+def test_api_retrain_init_from(client):
+    """Re-entrenar un experimento: init_from carga sus pesos y fuerza su arquitectura."""
+    c, manager = client
+    exp_id = _train(c, manager)
+
+    cfg = dim_config(**{"init_from": exp_id})
+    cfg["model"]["feature_dim"] = 999  # debe ser ignorado: manda el checkpoint origen
+    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
+    assert r.status_code == 200
+    new_id = r.json()["experiment_id"]
+    _wait(manager, new_id)
+    info = c.get(f"/api/experiments/{new_id}").json()
+    assert info["status"]["status"] == "completed", info["status"]["error"]
+    assert info["config"]["init_from"] == exp_id
+    assert info["config"]["model"]["feature_dim"] == 16  # la del origen
+
+    # init_from de otra NN → 400 con razón
+    cfg2 = seq_config(exp_id, **{"init_from": exp_id})
+    r2 = c.post("/api/train", json={"nn": "secuenciador", "config": cfg2})
+    assert r2.status_code == 400
+    assert "misma arquitectura" in r2.json()["detail"]
+
+
+def test_api_experiments_crud(client):
+    c, manager = client
+    exp_id = _train(c, manager)
+
+    # renombrar (alias)
+    r = c.patch(f"/api/experiments/{exp_id}", json={"label": "mi dimensionador"})
+    assert r.status_code == 200
+    assert c.get(f"/api/experiments/{exp_id}").json()["status"]["label"] == "mi dimensionador"
+
+    # duplicar
+    copy_id = c.post(f"/api/experiments/{exp_id}/copy").json()["experiment_id"]
+    assert copy_id != exp_id
+    assert c.get(f"/api/experiments/{copy_id}").json()["status"]["label"] == f"copia de {exp_id}"
+
+    # un secuenciador que referencia al dimensionador bloquea su borrado
+    r = c.post("/api/train", json={"nn": "secuenciador", "config": seq_config(exp_id)})
+    assert r.status_code == 200, r.json()
+    seq_id = r.json()["experiment_id"]
+    _wait(manager, seq_id)
+    r = c.delete(f"/api/experiments/{exp_id}")
+    assert r.status_code == 409
+    assert seq_id in r.json()["detail"]
+
+    # eliminando primero el secuenciador, el dimensionador ya se puede borrar
+    assert c.delete(f"/api/experiments/{seq_id}").status_code == 200
+    assert c.delete(f"/api/experiments/{exp_id}").status_code == 200
+    assert c.get(f"/api/experiments/{exp_id}").status_code == 404
+
+
+def test_api_samples_and_predict(client):
+    c, manager = client
+    exp_id = _train(c, manager)
+
+    r = c.get("/api/datasets/mnist_windows/samples",
+              params={"split": "test", "limit": 5, "params": '{"window_size": 14}'})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] > 0 and len(body["items"]) == 5
+    assert {"index", "label", "png"} <= set(body["items"][0])
+
+    # predicción sobre una ventana (sin trace: la muestra ya es una ventana)
+    r = c.post("/api/predict", json={
+        "experiment": exp_id, "split": "test", "index": 0,
+        "dataset": {"name": "mnist_windows", "params": {"window_size": 14}},
+    })
+    assert r.status_code == 200
+    p = r.json()
+    assert p["pred"] in range(10) and len(p["probs"]) == 10
+    assert p["trace"] is None and p["trace_reason"]
+
+    # sobre imagen completa sí hay trace (deslizamiento del dimensionador)
+    r = c.post("/api/predict", json={
+        "experiment": exp_id, "split": "test", "index": 0,
+        "dataset": {"name": "mnist_full", "params": {}},
+    })
+    assert r.status_code == 200
+    t = r.json()["trace"]
+    assert t is not None and t["kind"] == "dimensionador"
+    assert len(t["steps"]) == len(t["positions"]) == 9  # ventana 14, stride 7
+    assert len(t["steps"][0]["probs"]) == 10
+
+
+def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
+    c, manager = client
+    exp_id = _train(c, manager)
+
+    # dataset incompatible → 400 con razón
+    r = c.post("/api/evaluations", json={
+        "experiment": exp_id, "dataset": {"name": "mnist_sliding_sequences", "params": {}},
+    })
+    assert r.status_code == 400
+    assert "no es compatible" in r.json()["detail"]
+
+    # evaluación válida
+    r = c.post("/api/evaluations", json={
+        "experiment": exp_id, "split": "test", "limit": 64,
+        "dataset": {"name": "mnist_windows", "params": {"window_size": 14}},
+    })
+    assert r.status_code == 200, r.json()
+    eval_id = r.json()["evaluation_id"]
+    _wait(manager, eval_id)
+
+    info = c.get(f"/api/evaluations/{eval_id}").json()
+    assert info["status"]["status"] == "completed", info["status"].get("error")
+    summary = info["status"]["summary"]
+    assert summary["n"] == 64 and 0 <= summary["acc"] <= 1
+
+    # resultados con filtro y miniaturas
+    r = c.get(f"/api/evaluations/{eval_id}/results",
+              params={"result": "correct", "limit": 10})
+    body = r.json()
+    assert body["total"] + 0 <= 64
+    assert all(it["correct"] for it in body["items"])
+    assert all(it.get("png") for it in body["items"])
+
+    # guardar el filtro como dataset custom (nombre por defecto)
+    r = c.post(f"/api/evaluations/{eval_id}/save-dataset", json={"result": "correct"})
+    assert r.status_code == 200, r.json()
+    created = r.json()
+    assert created["count"] == body["total"]
+
+    # aparece en el catálogo, compatible con el dimensionador
+    listing = c.get("/api/datasets", params={"nn": "dimensionador"}).json()
+    entry = next(d for d in listing if d["name"] == created["name"])
+    assert entry["custom"] and entry["count"] == created["count"]
+
+    # y se puede usar para entrenar (re-entrenar el mismo experimento)
+    cfg = dim_config(created["name"], {}, **{"init_from": exp_id})
+    cfg["dataset"]["params"] = {}
+    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
+    assert r.status_code == 200, r.json()
+    _wait(manager, r.json()["experiment_id"])
+    info = c.get(f"/api/experiments/{r.json()['experiment_id']}").json()
+    assert info["status"]["status"] == "completed", info["status"]["error"]
+
+    # CRUD del dataset custom: renombrar bloqueado mientras lo use un experimento
+    r = c.patch(f"/api/custom-datasets/{created['name']}", json={"new_name": "otro"})
+    assert r.status_code == 409
+    # copiar sí, y el duplicado se puede renombrar y borrar
+    copy = c.post(f"/api/custom-datasets/{created['name']}/copy").json()
+    r = c.patch(f"/api/custom-datasets/{copy['name']}",
+                json={"new_name": "mi_copia", "description": "prueba"})
+    assert r.status_code == 200 and r.json()["name"] == "mi_copia"
+    assert c.delete("/api/custom-datasets/mi_copia").status_code == 200
+
+    # eliminar la evaluación
+    assert c.delete(f"/api/evaluations/{eval_id}").status_code == 200
+    assert c.get(f"/api/evaluations/{eval_id}").status_code == 404
