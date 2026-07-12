@@ -1,0 +1,14 @@
+{
+  "experiment": "exp_20260711_210146_secuenciador",
+  "dataset": {
+    "name": "mnist_sliding_sequences",
+    "params": {
+      "window_size": 14,
+      "stride": 7
+    }
+  },
+  "split": "test",
+  "limit": null,
+  "batch_size": 256,
+  "seed": 42
+}
