@@ -68,11 +68,12 @@ def test_catalog_integration_and_build(tmp_custom_store):
 
     # params desconocidos rechazados con mensaje claro
     with pytest.raises(ValueError, match="Parámetros no válidos"):
-        data_registry.build_dataset("sub_windows", {"stride": 3}, train=True, seed=7)
+        data_registry.build_dataset("sub_windows", {"num_steps": 8}, train=True, seed=7)
 
     # el catálogo expone los params efectivos del base como defaults del custom
     # (incluidos los que el base no fijó, como empty_fraction, con su default)
     assert entry["defaults"] == {"empty_fraction": 0.0, "stroke_width": 0,
+                                 "sampling": "random", "stride": 7,
                                  **BASE["params"]}
 
     # cambiar windows_per_image invalidaría los índices guardados → rechazado con razón

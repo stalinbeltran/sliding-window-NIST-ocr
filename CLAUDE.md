@@ -111,7 +111,8 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     (posiciones, pasos, notas de solape/huecos) y la pestaña Datasets tiene un
     visualizador que anima ventana+stride (editables, solo visualización) sobre el mapa
     de píxeles de una muestra; el trace de predict incluye el stride efectivo. Los
-    datasets de ventanas aleatorias (mnist_full/mnist_windows) no tienen stride propio.
+    datasets de ventanas (mnist_full/mnist_windows) solo usan su stride con
+    sampling='raster' (regla 24); con sampling='random' (default) es inerte.
 
 21. **Trayectoria guiada por el contenido** (2026-07-11, branch
     `feature/trayectoria-por-contenido`): `mnist_contour_sequences` hace que la ventana
@@ -166,6 +167,23 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     muestra elegida, y `GET /api/datasets/<name>/slide` lo acepta (el recorrido por el
     trazo se calcula sobre la imagen transformada; fuera de rango → 400 con razón).
 
+24. **Muestreo raster de ventanas para el dimensionador** (2026-07-12): los datasets de
+    ventanas (`mnist_full`/`mnist_windows` y sus customs) aceptan `sampling` ∈
+    {`random`, `raster`} (default `random`, el comportamiento de siempre). Con
+    `sampling='raster'` cada imagen produce la grilla completa de posiciones
+    `window_size`+`stride` en orden raster (`grid_positions`, la misma grilla que
+    recorre el secuenciador y el trace de predict): `windows_per_image` se ignora (el
+    número de ventanas por imagen lo dicta la grilla) y no se consume RNG (determinista
+    dado (params, idx)); `empty_fraction` funciona igual en ambos modos. Con
+    `sampling='random'` el `stride` es inerte. Validación: `sampling` con otro valor →
+    400 con razón; en un custom no se puede cambiar `sampling` (los índices apuntarían
+    a otras ventanas) y, si el base es raster, tampoco `window_size`/`stride` (definen
+    la grilla y remapearían los índices; con base random `window_size` sí se puede,
+    regla 19). La pestaña Probar propaga `sampling` (y su `stride` si es raster) del
+    entrenamiento a las evaluaciones; en `GET /api/datasets/<name>/slide` el
+    visualizador muestra la grilla y aclara cuándo el stride del dataset aplica
+    (`dataset_uses_stride` = raster) o es inerte (random).
+
 ## Arquitectura
 
 Dos redes neuronales:
@@ -187,7 +205,8 @@ Dos redes neuronales:
   inválida → 400 con razón antes de crear el experimento (2026-07-11).
 - Dataset por defecto del dimensionador en la web app: `mnist_full`
   (`model.window_size=28`), definido en `nn_registry.py` (2026-07-11). `mnist_full`
-  admite `window_size`/`windows_per_image` para entrenar por ventanas (regla 19).
+  admite `window_size`/`windows_per_image` para entrenar por ventanas (regla 19) y
+  `sampling`/`stride` para muestrearlas en grilla raster en vez de al azar (regla 24).
 
 ### 2. Secuenciador (NN recurrente / retroalimentada)
 - `src/swnist/models/secuenciador.py`

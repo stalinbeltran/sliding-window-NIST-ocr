@@ -12,25 +12,30 @@ from .datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
 DATASETS = {
     "mnist_full": {
         "description": "Imágenes MNIST completas 28×28; con window_size < 28 entrena "
-                       "con ventanas aleatorias de cada imagen (windows_per_image por imagen). "
+                       "con ventanas de cada imagen: sampling='random' toma "
+                       "windows_per_image ventanas aleatorias, sampling='raster' recorre "
+                       "la grilla window_size+stride completa (ignora windows_per_image). "
                        "Con empty_fraction > 0 esa fracción son ventanas vacías con la "
                        "clase extra 'no hay nada' (10). stroke_width > 0 uniformiza el "
                        "grosor del trazo a ~N px (0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistFull,
-        "defaults": {"window_size": 28, "windows_per_image": 1, "empty_fraction": 0.0,
-                     "stroke_width": 0},
+        "defaults": {"window_size": 28, "windows_per_image": 1, "sampling": "random",
+                     "stride": 7, "empty_fraction": 0.0, "stroke_width": 0},
         "full_image": True,   # la muestra visible es una imagen completa 28×28
     },
     "mnist_windows": {
-        "description": "Ventanas aleatorias de MNIST etiquetadas con el dígito de origen; "
-                       "con empty_fraction > 0 esa fracción son ventanas vacías con la "
-                       "clase extra 'no hay nada' (10). stroke_width > 0 uniformiza el "
-                       "grosor del trazo a ~N px (0 = original).",
+        "description": "Ventanas de MNIST etiquetadas con el dígito de origen: "
+                       "sampling='random' toma windows_per_image ventanas aleatorias por "
+                       "imagen, sampling='raster' recorre la grilla window_size+stride "
+                       "completa (ignora windows_per_image). Con empty_fraction > 0 esa "
+                       "fracción son ventanas vacías con la clase extra 'no hay nada' "
+                       "(10). stroke_width > 0 uniformiza el grosor del trazo a ~N px "
+                       "(0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistWindows,
-        "defaults": {"window_size": 14, "windows_per_image": 4, "empty_fraction": 0.0,
-                     "stroke_width": 0},
+        "defaults": {"window_size": 14, "windows_per_image": 4, "sampling": "random",
+                     "stride": 7, "empty_fraction": 0.0, "stroke_width": 0},
         "full_image": False,
     },
     "mnist_sliding_sequences": {
@@ -130,6 +135,12 @@ def validate_dataset_params(name: str, params: dict) -> None:
         v = params.get(key)
         if v is not None and (not isinstance(v, int) or v < 1):
             raise ValueError(f"{key} debe ser un entero ≥ 1; recibido: {v!r}.")
+    samp = params.get("sampling")
+    if samp is not None and samp not in ("random", "raster"):
+        raise ValueError(
+            f"sampling debe ser 'random' (windows_per_image ventanas aleatorias "
+            f"por imagen) o 'raster' (la grilla determinista window_size+stride "
+            f"que cubre la imagen, ignorando windows_per_image); recibido: {samp!r}.")
     ns = params.get("num_steps")
     if ns is not None and (not isinstance(ns, int) or ns < 2):
         raise ValueError(
@@ -158,6 +169,25 @@ def validate_dataset_params(name: str, params: dict) -> None:
                     f"de apuntar a las mismas muestras (con otro empty_fraction hasta "
                     f"la etiqueta de una muestra cambiaría). Crea un subconjunto nuevo "
                     f"si necesitas otro valor.")
+        if "sampling" in accepted:
+            eff_sampling = base_params.get("sampling", "random")
+            if "sampling" in params and params["sampling"] != eff_sampling:
+                raise ValueError(
+                    f"No se puede cambiar sampling en el dataset custom {name!r}: sus "
+                    f"índices se guardaron con sampling={eff_sampling!r} y con otro "
+                    f"muestreo dejarían de apuntar a las mismas ventanas. Crea un "
+                    f"subconjunto nuevo si necesitas otro muestreo.")
+            if eff_sampling == "raster":
+                for key in ("window_size", "stride"):
+                    if key in params and params[key] != base_params.get(key):
+                        raise ValueError(
+                            f"No se puede cambiar {key} en el dataset custom {name!r}: "
+                            f"con sampling='raster' la grilla (window_size, stride) "
+                            f"define cuántas ventanas salen de cada imagen, y sus "
+                            f"índices se guardaron con la grilla window_size="
+                            f"{base_params.get('window_size')}, stride="
+                            f"{base_params.get('stride')}. Crea un subconjunto nuevo "
+                            f"si necesitas otra grilla.")
 
 
 def effective_params(name: str, params: dict) -> dict:

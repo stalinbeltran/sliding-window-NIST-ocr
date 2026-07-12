@@ -46,6 +46,12 @@ class MnistFull(Dataset):
     (determinista dado (seed, idx)), con `windows_per_image` muestras por
     imagen; la muestra visible (display_item) sigue siendo la imagen completa.
 
+    Con sampling="raster" las ventanas no son aleatorias: cada imagen produce
+    la grilla completa de posiciones (window_size, stride) en orden raster
+    (windows.grid_positions, la misma que recorre el secuenciador), así que
+    `windows_per_image` se ignora — el número de ventanas por imagen lo dicta
+    la grilla. Sin RNG: determinista dado (params, idx).
+
     Con empty_fraction > 0, esa fracción de las muestras es una ventana SIN
     píxeles activos etiquetada EMPTY_LABEL (10, "no hay nada en este
     recuadro"): se toma de una región vacía de la misma imagen y, si la imagen
@@ -63,16 +69,26 @@ class MnistFull(Dataset):
         seed: int = 0,
         window_size: int = IMAGE_SIZE,
         windows_per_image: int = 1,
+        sampling: str = "random",
+        stride: int = 7,
         empty_fraction: float = 0.0,
         stroke_width: int = 0,
     ):
         self.base = load_mnist(train)
         self.window_size = int(window_size)
         self.windows_per_image = int(windows_per_image)
+        self.sampling = str(sampling)
+        self.stride = int(stride)
         self.empty_fraction = float(empty_fraction)
         self.stroke_width = int(stroke_width)
         self._strokes = StrokeUniformizer(stroke_width)
         self.seed = seed
+        if self.sampling == "raster":
+            self._positions = grid_positions(IMAGE_SIZE, self.window_size, self.stride)
+            self._per_image = len(self._positions)
+        else:
+            self._positions = None
+            self._per_image = self.windows_per_image
 
     def _image(self, base_idx) -> tuple[torch.Tensor, int]:
         """Imagen base con el trazo uniformizado (si stroke_width > 0)."""
@@ -80,7 +96,7 @@ class MnistFull(Dataset):
         return self._strokes(image, base_idx), label
 
     def __len__(self):
-        return len(self.base) * self.windows_per_image
+        return len(self.base) * self._per_image
 
     def _gen(self, idx) -> torch.Generator:
         return torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
@@ -111,12 +127,15 @@ class MnistFull(Dataset):
         return extract_window(image, top, left, ws)
 
     def __getitem__(self, idx):
-        image, label = self._image(idx // self.windows_per_image)
+        image, label = self._image(idx // self._per_image)
         gen = None
         if self.empty_fraction > 0:
             gen = self._gen(idx)
             if torch.rand(1, generator=gen).item() < self.empty_fraction:
                 return self._empty_window(image, gen), EMPTY_LABEL
+        if self.sampling == "raster":
+            top, left = self._positions[idx % self._per_image]
+            return extract_window(image, top, left, self.window_size), label
         if self.window_size >= IMAGE_SIZE:
             return image, label  # (image (1,28,28), label)
         if gen is None:
@@ -130,15 +149,16 @@ class MnistFull(Dataset):
         """(imagen mostrable, etiqueta): la imagen completa de la que sale la
         ventana, con la etiqueta EFECTIVA de la muestra (EMPTY_LABEL si es una
         ventana vacía)."""
-        image, label = self._image(idx // self.windows_per_image)
+        image, label = self._image(idx // self._per_image)
         return image, EMPTY_LABEL if self._is_empty_sample(idx) else label
 
 
 class MnistWindows(MnistFull):
-    """Ventanas aleatorias de imágenes MNIST, etiquetadas con el dígito de origen.
+    """Ventanas de imágenes MNIST, etiquetadas con el dígito de origen.
 
-    Compatible con: dimensionador. Misma generación de ventanas que MnistFull,
-    pero la muestra visible es la ventana misma (lo que recibe la NN).
+    Compatible con: dimensionador. Misma generación de ventanas que MnistFull
+    (aleatorias, o en grilla raster con sampling="raster"), pero la muestra
+    visible es la ventana misma (lo que recibe la NN).
     """
 
     def __init__(
@@ -146,12 +166,15 @@ class MnistWindows(MnistFull):
         train: bool = True,
         window_size: int = 14,
         windows_per_image: int = 4,
+        sampling: str = "random",
+        stride: int = 7,
         seed: int = 0,
         empty_fraction: float = 0.0,
         stroke_width: int = 0,
     ):
         super().__init__(train=train, seed=seed, window_size=window_size,
                          windows_per_image=windows_per_image,
+                         sampling=sampling, stride=stride,
                          empty_fraction=empty_fraction, stroke_width=stroke_width)
 
     def display_item(self, idx):

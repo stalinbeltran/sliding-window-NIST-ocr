@@ -414,6 +414,17 @@ function testDatasetParams() {
       const sw = exp.config.dataset?.params?.stroke_width;
       params.stroke_width = sw !== undefined ? sw : 0;
     }
+    // Mismo muestreo de ventanas que en el entrenamiento (random o raster con
+    // su stride); con sampling='random' el stride es inerte y se omite.
+    if ("sampling" in params) {
+      const tp = exp.config.dataset?.params || {};
+      params.sampling = tp.sampling ?? "random";
+      if (params.sampling === "raster") {
+        if (tp.stride !== undefined) params.stride = tp.stride;
+      } else {
+        delete params.stride;
+      }
+    }
   }
   if (exp && exp.config.nn === "secuenciador") {
     const tp = exp.config.dataset?.params || {};
@@ -855,7 +866,7 @@ async function refreshSlide() {
         `${r.window_size}×${r.window_size}, stride ${r.stride}` +
         `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
         `<br>stride propio del dataset: ${r.dataset_uses_stride
-          ? (r.effective_defaults.stride ?? "—") : "no tiene (ventanas aleatorias)"}` +
+          ? (r.effective_defaults.stride ?? "—") : "no aplica (sampling='random', ventanas aleatorias)"}` +
         strokeInfo +
         (r.note ? `<br><br>${r.note}` : "");
     renderSlideStep();

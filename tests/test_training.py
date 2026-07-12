@@ -27,6 +27,7 @@ def _assert_completed(registry, exp_id, backups_root):
     ("mnist_full", {}),  # imagen completa (defaults)
     ("mnist_full", {"window_size": 5, "windows_per_image": 2}),  # adaptado a ventanas
     ("mnist_windows", {"window_size": 14, "windows_per_image": 2}),
+    ("mnist_windows", {"window_size": 14, "sampling": "raster", "stride": 7}),  # grilla raster
 ])
 def test_train_dimensionador(tmp_registry, tiny_datasets, tmp_path, dataset, params):
     cfg = dim_config(dataset, params)

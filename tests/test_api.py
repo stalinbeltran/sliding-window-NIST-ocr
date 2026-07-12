@@ -63,10 +63,11 @@ def test_api_experiment_not_found(client):
 def test_api_foreign_params_rejected_upfront(client):
     """Params ajenos al dataset se rechazan ANTES de crear el experimento, con la
     razón en el 400. (El caso del bug original — mnist_full con window_size y
-    windows_per_image — ahora es válido: mnist_full acepta esos params.)"""
+    windows_per_image — ahora es válido: mnist_full acepta esos params, y desde
+    la regla 24 también stride; num_steps sigue siendo ajeno.)"""
     c, _ = client
     cfg = dim_config("mnist_full", {})
-    cfg["dataset"]["params"] = {"stride": 7}
+    cfg["dataset"]["params"] = {"num_steps": 8}
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 400
     assert "Parámetros no válidos" in r.json()["detail"]

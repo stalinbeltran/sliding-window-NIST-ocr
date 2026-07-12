@@ -70,6 +70,101 @@ def test_mnist_windows_item_and_determinism():
     assert not torch.equal(w1, w3)  # otra semilla, otra ventana
 
 
+def test_raster_sampling_windows():
+    """sampling='raster': cada imagen produce la grilla completa window_size+stride
+    en orden raster (windows_per_image se ignora), sin RNG."""
+    ds = MnistWindows(train=True, window_size=14, stride=7, sampling="raster", seed=7)
+    pos = grid_positions(IMAGE_SIZE, 14, 7)
+    assert len(ds) == len(pos) * len(ds.base)
+    image, label = ds.base[0]
+    for i, (top, left) in enumerate(pos):
+        w, l = ds[i]
+        assert l == label
+        assert torch.equal(w, extract_window(image, top, left, 14))
+    # la segunda imagen empieza donde termina la grilla de la primera
+    image2, label2 = ds.base[1]
+    w, l = ds[len(pos)]
+    assert l == label2 and torch.equal(w, extract_window(image2, 0, 0, 14))
+    # windows_per_image se ignora: el número de muestras lo dicta la grilla
+    ds2 = MnistWindows(train=True, window_size=14, stride=7, sampling="raster",
+                       windows_per_image=99, seed=7)
+    assert len(ds2) == len(ds)
+    # otra semilla, mismas ventanas: el recorrido es determinista sin RNG
+    ds3 = MnistWindows(train=True, window_size=14, stride=7, sampling="raster", seed=8)
+    assert torch.equal(ds[3][0], ds3[3][0])
+
+
+def test_raster_sampling_display_and_empty_fraction():
+    # display_item sigue siendo la imagen completa correcta, y empty_fraction
+    # funciona igual que con ventanas aleatorias (fracción de ventanas vacías).
+    ds = MnistFull(train=True, window_size=14, stride=14, sampling="raster",
+                   seed=3, empty_fraction=0.5)
+    per_image = len(grid_positions(IMAGE_SIZE, 14, 14))  # coords {0, 14} → 4
+    assert per_image == 4 and len(ds) == 4 * len(ds.base)
+    full, _ = ds.display_item(per_image)  # primera ventana de la segunda imagen
+    assert torch.equal(full, ds.base[1][0])
+    n = 200
+    labels = [ds.display_item(i)[1] for i in range(n)]
+    empties = [i for i in range(n) if labels[i] == EMPTY_LABEL]
+    assert 0.3 < len(empties) / n < 0.7
+    for i in empties[:10]:
+        w, label = ds[i]
+        assert label == EMPTY_LABEL
+        assert ((w * 0.3081 + 0.1307) <= EMPTY_INK_THRESHOLD + 1e-6).all()
+
+
+def test_random_sampling_default_unchanged():
+    # sampling='random' (default) reproduce las muestras de configs antiguas;
+    # el stride es inerte en ese modo.
+    old = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
+    new = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7,
+                       sampling="random", stride=3)
+    assert len(old) == len(new)
+    for i in (0, 10, 99):
+        assert torch.equal(old[i][0], new[i][0]) and old[i][1] == new[i][1]
+
+
+def test_sampling_param_validation():
+    with pytest.raises(ValueError, match="sampling debe ser"):
+        build_dataset("mnist_windows", {"sampling": "zigzag"}, train=True, seed=0)
+    with pytest.raises(ValueError, match="stride debe ser"):
+        build_dataset("mnist_full", {"sampling": "raster", "stride": 0},
+                      train=True, seed=0)
+    # los datasets de secuencias no aceptan sampling (tienen su propio recorrido)
+    with pytest.raises(ValueError, match="Parámetros no válidos"):
+        build_dataset("mnist_sliding_sequences", {"sampling": "raster"},
+                      train=True, seed=0)
+    ds = build_dataset("mnist_windows", {"sampling": "raster", "window_size": 14,
+                                         "stride": 7}, train=True, seed=0)
+    assert len(ds) == 9 * len(ds.base)
+
+
+def test_custom_dataset_rejects_sampling_and_raster_grid_changes(tmp_custom_store):
+    """El muestreo (y, en raster, la grilla) definen a qué ventana apunta cada
+    índice guardado: cambiarlos en un custom se rechaza con razón."""
+    tmp_custom_store.create(
+        {"name": "mnist_windows",
+         "params": {"window_size": 14, "sampling": "raster", "stride": 7},
+         "split": "test", "seed": 42},
+        [0, 1, 2], "sub_raster")
+    validate_dataset_params("sub_raster", {"sampling": "raster", "stride": 7})  # igual: ok
+    with pytest.raises(ValueError, match="sampling"):
+        validate_dataset_params("sub_raster", {"sampling": "random"})
+    with pytest.raises(ValueError, match="stride"):
+        validate_dataset_params("sub_raster", {"stride": 5})
+    with pytest.raises(ValueError, match="window_size"):
+        validate_dataset_params("sub_raster", {"window_size": 10})
+    # con muestreo aleatorio la ventana sí se puede cambiar (regla 19), pero
+    # pasar a raster remaparía los índices → rechazado
+    tmp_custom_store.create(
+        {"name": "mnist_windows", "params": {"window_size": 14}, "split": "test",
+         "seed": 42},
+        [0, 1], "sub_random")
+    validate_dataset_params("sub_random", {"window_size": 10})
+    with pytest.raises(ValueError, match="sampling"):
+        validate_dataset_params("sub_random", {"sampling": "raster"})
+
+
 def test_empty_fraction_generates_empty_windows():
     """empty_fraction > 0: esa fracción son ventanas SIN píxeles activos con la
     clase 'no hay nada' (EMPTY_LABEL), deterministas dado (seed, idx)."""
@@ -238,9 +333,9 @@ def test_build_dataset_unknown_name():
 
 
 def test_build_dataset_rejects_params_of_other_dataset():
-    # mnist_full acepta params de ventana, pero no los de otros datasets (p. ej. stride)
+    # mnist_full acepta params de ventana, pero no los de otros datasets (p. ej. num_steps)
     with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_full", {"stride": 7}, train=True, seed=42)
+        build_dataset("mnist_full", {"num_steps": 8}, train=True, seed=42)
 
 
 def test_build_dataset_rejects_invalid_param_values():

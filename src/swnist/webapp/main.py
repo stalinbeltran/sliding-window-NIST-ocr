@@ -123,7 +123,9 @@ def api_dataset_slide(name: str, window_size: int | None = None,
     (split, index), con el trazo uniformizado si stroke_width > 0."""
     info = _400(data_registry.dataset_info, name)
     eff = _400(data_registry.effective_params, name, {})
-    uses_stride = "stride" in eff
+    # Los datasets de ventanas solo deslizan con sampling='raster'; con
+    # sampling='random' su stride es inerte (ventanas aleatorias).
+    uses_stride = "stride" in eff and eff.get("sampling") != "random"
     ws = int(window_size) if window_size is not None else int(eff.get("window_size", IMAGE_SIZE))
     if not 1 <= ws <= IMAGE_SIZE:
         raise HTTPException(400, f"window_size debe estar entre 1 y {IMAGE_SIZE}; "
@@ -164,10 +166,10 @@ def api_dataset_slide(name: str, window_size: int | None = None,
     axis = sorted({p[0] for p in positions})
     notes = []
     if not uses_stride:
-        notes.append("Este dataset no desliza una ventana: muestrea ventanas "
-                     "aleatorias por imagen (windows_per_image), así que no tiene "
-                     "stride propio. El recorrido mostrado es el raster hipotético "
-                     "que usa, p. ej., el trace del dimensionador en Probar.")
+        notes.append("Este dataset está en sampling='random': muestrea ventanas "
+                     "aleatorias por imagen (windows_per_image) y su stride no se "
+                     "usa. El recorrido mostrado es la grilla raster que usaría "
+                     "con sampling='raster' (y el trace del dimensionador en Probar).")
     if ws >= IMAGE_SIZE:
         notes.append("La ventana cubre toda la imagen: el recorrido colapsa a 1 paso.")
     elif st > ws:
