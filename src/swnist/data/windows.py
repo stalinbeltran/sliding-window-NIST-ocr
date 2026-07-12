@@ -1,19 +1,12 @@
-"""Utilidades de ventana deslizante sobre imágenes 2D."""
+"""Utilidades de ventana deslizante sobre imágenes 2D.
+
+El recorrido de la ventana lo define la trayectoria por el trazo del carácter
+(ver `swnist.data.trajectory`): el barrido raster de la imagen se eliminó
+(2026-07-12) porque no aportaba señal —los desplazamientos eran constantes y no
+describían la forma.
+"""
 
 import torch
-
-
-def grid_positions(image_size: int, window_size: int, stride: int) -> list[tuple[int, int]]:
-    """Posiciones (top, left) en orden raster que cubren la imagen.
-
-    Incluye siempre la última posición pegada al borde aunque no caiga en la grilla,
-    para no dejar franjas sin ver.
-    """
-    last = image_size - window_size
-    coords = list(range(0, last + 1, stride))
-    if coords[-1] != last:
-        coords.append(last)
-    return [(y, x) for y in coords for x in coords]
 
 
 def extract_window(image: torch.Tensor, top: int, left: int, window_size: int) -> torch.Tensor:

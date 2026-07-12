@@ -6,8 +6,7 @@ con la NN seleccionada. Los datasets custom (subconjuntos filtrados, ver
 """
 
 from .custom import CustomDatasetStore, CustomSubset
-from .datasets import (IMAGE_SIZE, MnistContourSequences,
-                       MnistSlidingSequences)
+from .datasets import IMAGE_SIZE, MnistContourSequences
 from .synthstrokes import STROKE_DEFAULTS, SyntheticStrokes
 from .synthstrokes import validate_params as _validate_stroke_params
 
@@ -24,15 +23,6 @@ DATASETS = {
         "builder": SyntheticStrokes,
         "defaults": dict(STROKE_DEFAULTS),
         "full_image": False,   # la muestra visible es la ventana misma
-    },
-    "mnist_sliding_sequences": {
-        "description": "Secuencias de ventanas (recorrido raster) con posición (x, y) "
-                       "por paso. stroke_width > 0 uniformiza el grosor del trazo a "
-                       "~N px (0 = original).",
-        "compatible_with": ["secuenciador"],
-        "builder": MnistSlidingSequences,
-        "defaults": {"window_size": 14, "stride": 7, "stroke_width": 1},
-        "full_image": True,
     },
     "mnist_contour_sequences": {
         "description": "Secuencias de ventanas que siguen el trazo del carácter "
@@ -132,16 +122,13 @@ def validate_dataset_params(name: str, params: dict) -> None:
                     f"subconjunto nuevo si necesitas otros rangos.")
         return
 
-    # Datasets de secuencias (secuenciador): ventana + trayectoria (stride/num_steps)
+    # Datasets de secuencias (secuenciador): ventana + trayectoria (num_steps)
     # y grosor de trazo.
     ws = params.get("window_size")
     if ws is not None and not (isinstance(ws, int) and 1 <= ws <= IMAGE_SIZE):
         raise ValueError(
             f"window_size debe ser un entero entre 1 y {IMAGE_SIZE} (las imágenes "
             f"MNIST son de {IMAGE_SIZE}×{IMAGE_SIZE}); recibido: {ws!r}.")
-    v = params.get("stride")
-    if v is not None and (not isinstance(v, int) or v < 1):
-        raise ValueError(f"stride debe ser un entero ≥ 1; recibido: {v!r}.")
     ns = params.get("num_steps")
     if ns is not None and (not isinstance(ns, int) or ns < 2):
         raise ValueError(
@@ -159,7 +146,7 @@ def validate_dataset_params(name: str, params: dict) -> None:
 def effective_params(name: str, params: dict) -> dict:
     """Params con los que realmente se construirá el dataset (defaults ⊕ base custom ⊕ params).
 
-    Es la única fuente de verdad para window_size/stride efectivos: todo chequeo
+    Es la única fuente de verdad para window_size/num_steps efectivos: todo chequeo
     de compatibilidad debe mirar esto y no los params crudos de una config.
     """
     if name in DATASETS:
@@ -174,7 +161,7 @@ def effective_window_size(name: str, params: dict) -> int:
 
 
 def _generated_description(base: str, eff: dict, split: str, count: int) -> str:
-    shown = [f"{k}={eff[k]}" for k in ("window_size", "num_steps", "stride", "stroke_width")
+    shown = [f"{k}={eff[k]}" for k in ("window_size", "num_steps", "stroke_width")
              if eff.get(k) is not None]
     return (f"Generado desde {base} ({split}, {count} muestras) con "
             f"{', '.join(shown)}.")
@@ -187,10 +174,10 @@ def create_custom_from_base(base: str, params: dict, split: str = "train",
 
     A diferencia de los customs nacidos de un filtro de evaluación (un subconjunto de
     muestras interesantes), aquí las muestras son el split entero —o sus primeras
-    `limit`— y lo que define el dataset son los PARAMS: la trayectoria
-    (num_steps/stride), la ventana y el grosor de trazo quedan congelados (se guardan
-    los efectivos, no los del formulario) en su definición. Eso es justo lo que hace
-    falta para entrenar y evaluar siempre con el mismo recorrido (reglas 20 y 21).
+    `limit`— y lo que define el dataset son los PARAMS: la trayectoria (num_steps),
+    la ventana y el grosor de trazo quedan congelados (se guardan los efectivos, no
+    los del formulario) en su definición. Eso es justo lo que hace falta para
+    entrenar y evaluar siempre con el mismo recorrido (regla 21).
     """
     if base not in DATASETS:
         if custom_store.exists(base):

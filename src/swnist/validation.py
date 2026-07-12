@@ -69,9 +69,10 @@ def _model_window(config: dict) -> int | None:
     return int(ws) if ws is not None else None
 
 
-# Parámetros que definen la trayectoria de un dataset de secuencias: stride en
-# el recorrido raster, num_steps en el recorrido por el trazo (contour).
-TRAJECTORY_KEYS = ("stride", "num_steps")
+# Parámetros que definen la trayectoria de un dataset de secuencias: num_steps
+# (número de posiciones del recorrido por el trazo). El recorrido raster se
+# eliminó (2026-07-12), así que ya no hay 'stride'.
+TRAJECTORY_KEYS = ("num_steps",)
 
 
 def dimensionador_feature_dim(registry: ExperimentRegistry, exp_id: str) -> int:
@@ -103,10 +104,10 @@ def sequence_effective_params(exp_config: dict, registry: ExperimentRegistry) ->
 
     La trayectoria es ENTRADA de la red (la posición por paso, de la que sale el
     desplazamiento (dx, dy) que consume el secuenciador): cambiarla en inferencia
-    evalúa fuera de distribución (bug del 2026-07-11: entrenar con stride 5 —36
-    pasos— y evaluar con stride 7 —25 pasos— hundía la accuracy de 0.91 a 0.56).
-    window_size lo dicta su dimensionador; stride/num_steps son los efectivos del
-    dataset de entrenamiento (defaults ⊕ params).
+    evalúa fuera de distribución (bug del 2026-07-11: entrenar con una trayectoria
+    de 36 pasos y evaluar con una de 25 hundía la accuracy de 0.91 a 0.56).
+    window_size lo dicta su dimensionador; num_steps es el efectivo del dataset de
+    entrenamiento (defaults ⊕ params).
     """
     dim_exp = _get_experiment(registry, exp_config["dimensionador_experiment"],
                               "Secuenciador: dimensionador")
@@ -203,8 +204,8 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
                 f"un dimensionador con model.window_size < {IMAGE_SIZE} (p. ej. "
                 f"5 con synthetic_strokes y window_size=5) y selecciónalo aquí.")
         # La ventana de la secuencia la dicta el dimensionador, y la trayectoria
-        # efectiva (stride o num_steps, dados o heredados de los defaults) se
-        # fija en la config para que quede registrado el valor realmente usado:
+        # efectiva (num_steps, dado o heredado de los defaults) se fija en la
+        # config para que quede registrado el valor realmente usado:
         # evaluaciones y predict deben reproducir esta misma trayectoria.
         params = {**(dataset_cfg.get("params") or {}), "window_size": dim_ws}
         eff = data_registry.effective_params(dataset_cfg["name"], params)
@@ -278,30 +279,13 @@ def validate_eval_config(config: dict, registry: ExperimentRegistry) -> dict:
             registry, dim_id,
             f"Evaluación: el secuenciador {exp_id!r} referencia al dimensionador")
         _require_checkpoint(registry, dim_id, "Evaluación (dimensionador)")
-        # La trayectoria (ventana + stride/num_steps) la dicta el entrenamiento:
-        # se fija en la config de la evaluación (valores efectivos, no los del
-        # formulario) y pedir otra explícitamente es un 400 con la razón.
+        # La trayectoria (ventana + num_steps) la dicta el entrenamiento: se fija
+        # en la config de la evaluación (valores efectivos, no los del formulario)
+        # y pedir otra explícitamente es un 400 con la razón.
         eff = sequence_effective_params(exp["config"], registry)
         params = dict(dataset_cfg.get("params") or {})
-        # El dataset elegido debe usar el mismo TIPO de recorrido que el del
-        # entrenamiento (raster con stride vs. trazo con num_steps): si no
-        # acepta el parámetro de trayectoria aprendido, la trayectoria sería
-        # otra y la evaluación fuera de distribución.
-        accepted = data_registry.effective_params(dataset_cfg["name"], {})
-        train_ds = (exp["config"].get("dataset") or {}).get("name")
-        for key in TRAJECTORY_KEYS:
-            if key in eff and key not in accepted:
-                raise ValueError(
-                    f"El secuenciador {exp_id!r} se entrenó con el recorrido de "
-                    f"{train_ds!r} ({key}={eff[key]}), pero {dataset_cfg['name']!r} "
-                    f"usa otro tipo de recorrido (no acepta {key}). La trayectoria "
-                    f"es entrada de la red: evalúalo con un dataset del mismo tipo "
-                    f"de recorrido (p. ej. {train_ds!r} o un custom basado en él).")
         reasons = {
             "window_size": "es la ventana de su dimensionador",
-            "stride": "define la trayectoria que la red aprendió (el desplazamiento "
-                      "(dx, dy) por paso es entrada de la red); con otro stride la "
-                      "evaluación sería fuera de distribución y engañosa",
             "num_steps": "define la trayectoria que la red aprendió (el número de "
                          "pasos del recorrido por el trazo es entrada de la red); "
                          "con otro num_steps la evaluación sería fuera de "

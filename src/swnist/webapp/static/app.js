@@ -202,15 +202,12 @@ function onInitFromChange() {
       if (exp) {
         config.model = JSON.parse(JSON.stringify(exp.config.model));
         // Secuenciador: por defecto se continúa con la misma trayectoria (mismo
-        // stride/num_steps) que el experimento origen; editable en la config si
-        // se quiere re-entrenar con otra. Solo se copian los params que el
-        // dataset seleccionado acepta (raster usa stride, contour num_steps).
+        // num_steps) que el experimento origen; editable en la config si se
+        // quiere re-entrenar con otra.
         if ($("nn-select").value === "secuenciador" && config.dataset?.params) {
-          for (const k of ["stride", "num_steps"]) {
-            const orig = exp.config.dataset?.params?.[k];
-            if (orig !== undefined && k in config.dataset.params) {
-              config.dataset.params[k] = orig;
-            }
+          const orig = exp.config.dataset?.params?.num_steps;
+          if (orig !== undefined && "num_steps" in config.dataset.params) {
+            config.dataset.params.num_steps = orig;
           }
         }
       }
@@ -414,7 +411,7 @@ async function onTestExpChange() {
 function testDatasetParams() {
   // Params efectivos: defaults del dataset + los del entrenamiento del
   // experimento. La CNN se evalúa con la ventana con la que se entrenó; el
-  // secuenciador además con su stride (la trayectoria es entrada de la red:
+  // secuenciador además con su num_steps (la trayectoria es entrada de la red:
   // el servidor rechaza con 400 cualquier otro valor).
   const exp = testExp();
   const ds = TEST_DS.find((d) => d.name === $("test-dataset-select").value);
@@ -436,10 +433,8 @@ function testDatasetParams() {
     // fija el efectivo del entrenamiento en la config de la evaluación.
     if (tp.window_size !== undefined) params.window_size = tp.window_size;
     else delete params.window_size;
-    for (const k of ["stride", "num_steps"]) {
-      if (tp[k] !== undefined && k in params) params[k] = tp[k];
-      else delete params[k];
-    }
+    if (tp.num_steps !== undefined && "num_steps" in params) params.num_steps = tp.num_steps;
+    else delete params.num_steps;
     // stroke_width del entrenamiento (0 si el experimento es anterior al param)
     if ("stroke_width" in params) params.stroke_width = tp.stroke_width ?? 0;
   }
@@ -502,7 +497,6 @@ async function refreshEvals() {
       <td class="hint">${ev.config.experiment}</td>
       <td class="hint">${ev.config.dataset.name} (${ev.config.split}${ev.config.limit ? ", n≤" + ev.config.limit : ""})${
         ev.config.dataset.params?.window_size !== undefined ? `<br>ventana ${ev.config.dataset.params.window_size}` : ""}${
-        ev.config.dataset.params?.stride !== undefined ? ` · stride ${ev.config.dataset.params.stride}` : ""}${
         ev.config.dataset.params?.num_steps !== undefined ? ` · num_steps ${ev.config.dataset.params.num_steps}` : ""}${
         ev.config.dataset.params?.stroke_width ? ` · trazo ${ev.config.dataset.params.stroke_width}px` : ""}</td>
       <td class="status-${st}">${st}${ev.running ? ` ⏳ ${prog ? prog.done + "/" + prog.total : ""}` : ""}</td>
@@ -734,7 +728,7 @@ function renderSampleStep() {
     }
     $("anim-step").textContent =
       `paso ${animIdx + 1}/${t.steps.length} · ventana ${t.window_size}` +
-      (t.stride ? ` · stride ${t.stride}` : "") + ` · salida: ${fmtLabel(stepPred)}`;
+      ` · salida: ${fmtLabel(stepPred)}`;
   }
   renderProbBars(probs, r.label, r.pred);
 }
@@ -834,7 +828,7 @@ $("anim-next").addEventListener("click", () => {
 // PESTAÑA DATASETS
 // ============================================================
 
-// ---------- visualizador de deslizamiento (window_size / stride) ----------
+// ---------- visualizador de deslizamiento (window_size / num_steps) ----------
 
 let SLIDE_DS = [];   // catálogo completo de datasets (para el visualizador)
 let SLIDE = null;    // respuesta de /slide + imagen de fondo cargada
@@ -863,12 +857,10 @@ async function initSlidePanel() {
 function onSlideDatasetChange() {
   const ds = SLIDE_DS.find((d) => d.name === $("slide-dataset").value);
   if (!ds) return;
-  // Datasets que siguen el trazo usan num_steps; los demás, stride (propio o
-  // el raster hipotético del trace).
+  // Solo los datasets de secuencias definen recorrido (num_steps); el del
+  // dimensionador es una ventana suelta.
   const contour = ds.defaults.num_steps != null;
   $("slide-ws").value = ds.defaults.window_size ?? 28;
-  $("slide-stride").value = contour ? "" : (ds.defaults.stride ?? 7);
-  $("slide-stride").disabled = contour;
   $("slide-steps").value = contour ? ds.defaults.num_steps : "";
   $("slide-steps").disabled = !contour;
   $("slide-stroke").value = ds.defaults.stroke_width ?? 0;
@@ -896,8 +888,7 @@ function slideParams() {
   const num = (id) => ($(id).value === "" || $(id).disabled
     ? null : parseInt($(id).value, 10));
   const params = {stroke_width: Math.max(0, parseInt($("slide-stroke").value, 10) || 0)};
-  for (const [id, key] of [["slide-ws", "window_size"], ["slide-stride", "stride"],
-                           ["slide-steps", "num_steps"]]) {
+  for (const [id, key] of [["slide-ws", "window_size"], ["slide-steps", "num_steps"]]) {
     const v = num(id);
     if (v != null && !Number.isNaN(v)) params[key] = v;
   }
@@ -906,8 +897,7 @@ function slideParams() {
 
 function suggestedName(ds) {
   const p = slideParams();
-  const traj = p.num_steps != null ? `ns${p.num_steps}` : `st${p.stride}`;
-  return `${ds.name}_ws${p.window_size}_${traj}_sw${p.stroke_width}`;
+  return `${ds.name}_ws${p.window_size}_ns${p.num_steps}_sw${p.stroke_width}`;
 }
 
 function syncSlideCreate() {
@@ -953,7 +943,6 @@ async function refreshSlide() {
     const stroke = Math.max(0, parseInt($("slide-stroke").value, 10) || 0);
     const q = new URLSearchParams();
     if ($("slide-ws").value) q.set("window_size", $("slide-ws").value);
-    if ($("slide-stride").value) q.set("stride", $("slide-stride").value);
     if ($("slide-steps").value) q.set("num_steps", $("slide-steps").value);
     q.set("stroke_width", stroke);
     // Para los datasets que siguen el trazo el recorrido es de la muestra elegida
@@ -973,23 +962,14 @@ async function refreshSlide() {
     }
     SLIDE = { ...r, imgEl };
     slideIdx = 0;
-    const perAxis = r.axis_coords.length;
     const strokeInfo = r.stroke_width > 0
       ? `<br>trazo uniformizado a ~${r.stroke_width} px (stroke_width)` : "";
     info.innerHTML = r.single_window
       ? `<b>ventana ${r.window_size}×${r.window_size}</b> — la muestra es la ventana ` +
         `misma (el dimensionador la describe)` + (r.note ? `<br><br>${r.note}` : "")
-      : r.follows_content
-      ? `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
+      : `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
         `${r.window_size}×${r.window_size}, num_steps ${r.num_steps}` +
         `<br>recorrido derivado del trazo de la muestra` + strokeInfo +
-        (r.note ? `<br><br>${r.note}` : "")
-      : `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
-        `${r.window_size}×${r.window_size}, stride ${r.stride}` +
-        `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
-        `<br>stride propio del dataset: ${r.dataset_uses_stride
-          ? (r.effective_defaults.stride ?? "—") : "no aplica (sampling='random', ventanas aleatorias)"}` +
-        strokeInfo +
         (r.note ? `<br><br>${r.note}` : "");
     renderSlideStep();
     startSlide();
@@ -1056,7 +1036,7 @@ function stopSlide() {
 }
 
 $("slide-dataset").addEventListener("change", onSlideDatasetChange);
-["slide-ws", "slide-stride", "slide-steps", "slide-stroke", "slide-split", "slide-index"].forEach((id) =>
+["slide-ws", "slide-steps", "slide-stroke", "slide-split", "slide-index"].forEach((id) =>
   $(id).addEventListener("change", () => { syncSlideCreate(); refreshSlide(); }));
 $("slide-create").addEventListener("click", createSlideDataset);
 $("slide-play").addEventListener("click", () => (slideTimer ? stopSlide() : startSlide()));

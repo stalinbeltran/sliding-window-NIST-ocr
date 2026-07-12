@@ -73,7 +73,7 @@ def seq_config(dim_exp_id, epochs=1, loss_mode="all", cell="gru", **extra):
     return {
         "dimensionador_experiment": dim_exp_id,
         "freeze_dimensionador": True,
-        "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 7}},
+        "dataset": {"name": "mnist_contour_sequences", "params": {"num_steps": 9}},
         "model": {"hidden_dim": 32, "num_classes": 10, "cell": cell},
         "training": {"epochs": epochs, "batch_size": 64, "lr": 0.001, "weight_decay": 0.0,
                      "seed": 42, "val_fraction": 0.1, "log_every": 2, "loss_mode": loss_mode},

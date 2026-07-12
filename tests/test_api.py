@@ -48,8 +48,7 @@ def test_api_datasets_filtered(client):
     for d in c.get("/api/datasets", params={"nn": "dimensionador"}).json():
         assert "dimensionador" in d["compatible_with"]
     seq = c.get("/api/datasets", params={"nn": "secuenciador"}).json()
-    assert [d["name"] for d in seq] == ["mnist_sliding_sequences",
-                                        "mnist_contour_sequences"]
+    assert [d["name"] for d in seq] == ["mnist_contour_sequences"]
 
 
 def test_api_train_unknown_nn(client):
@@ -216,24 +215,8 @@ def test_api_samples_and_predict(client):
 
 
 def test_api_dataset_slide(client):
-    """GET /slide expone el recorrido real de la ventana para verificar el stride."""
+    """GET /slide expone el recorrido real de la ventana para verificar la trayectoria."""
     c, _ = client
-    r = c.get("/api/datasets/mnist_sliding_sequences/slide")
-    assert r.status_code == 200
-    b = r.json()
-    assert b["window_size"] == 14 and b["stride"] == 7
-    assert b["dataset_uses_stride"] and b["steps"] == 9
-    assert b["positions"][0] == [0, 0] and b["axis_coords"] == [0, 7, 14]
-
-    # overrides de visualización: ventana 5, stride 5 → 36 pasos (con borde 23)
-    b = c.get("/api/datasets/mnist_sliding_sequences/slide",
-              params={"window_size": 5, "stride": 5}).json()
-    assert b["steps"] == 36 and b["axis_coords"] == [0, 5, 10, 15, 20, 23]
-
-    # stride > ventana deja franjas sin ver → se avisa (el caso del bug: 25 pasos)
-    b = c.get("/api/datasets/mnist_sliding_sequences/slide",
-              params={"window_size": 5, "stride": 7}).json()
-    assert b["steps"] == 25 and "franjas" in b["note"]
 
     # dataset de ventanas sueltas (synthetic_strokes): no hay recorrido deslizante
     b = c.get("/api/datasets/synthetic_strokes/slide").json()
@@ -241,64 +224,68 @@ def test_api_dataset_slide(client):
     assert "no hay recorrido" in b["note"]
 
     # dataset de trazo: el recorrido sigue el carácter y depende de la muestra
-    b = c.get("/api/datasets/mnist_contour_sequences/slide").json()
-    assert b["follows_content"] and b["num_steps"] == 12
-    assert b["steps"] == len(b["positions"]) == 12 and b["stride"] is None
+    r = c.get("/api/datasets/mnist_contour_sequences/slide")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["follows_content"] and b["window_size"] == 14 and b["num_steps"] == 12
+    assert b["steps"] == len(b["positions"]) == 12
     b2 = c.get("/api/datasets/mnist_contour_sequences/slide",
                params={"index": 1}).json()
     assert b2["positions"] != b["positions"]  # otra muestra, otro recorrido
+
+    # overrides de visualización
+    b = c.get("/api/datasets/mnist_contour_sequences/slide",
+              params={"window_size": 5, "num_steps": 20}).json()
+    assert b["window_size"] == 5 and b["steps"] == 20
+
     assert c.get("/api/datasets/mnist_contour_sequences/slide",
                  params={"num_steps": 1}).status_code == 400
     assert c.get("/api/datasets/mnist_contour_sequences/slide",
                  params={"index": 10 ** 9}).status_code == 400
-
-    assert c.get("/api/datasets/mnist_sliding_sequences/slide",
-                 params={"stride": 0}).status_code == 400
-    assert c.get("/api/datasets/mnist_sliding_sequences/slide",
+    assert c.get("/api/datasets/mnist_contour_sequences/slide",
                  params={"window_size": 99}).status_code == 400
     assert c.get("/api/datasets/no_existe/slide").status_code == 400
 
 
-def test_api_secuenciador_eval_and_predict_use_training_stride(client):
-    """Bug del 2026-07-11: entrenar con un stride y evaluar/predecir con otro
-    cambiaba la trayectoria (entrada de la red) y hundía la accuracy. Ahora la
-    evaluación fija los params efectivos del entrenamiento (400 si se pide otro
-    stride) y el predict desliza siempre con la trayectoria real."""
+def test_api_secuenciador_eval_and_predict_use_training_trajectory(client):
+    """Bug del 2026-07-11: entrenar con una trayectoria y evaluar/predecir con otra
+    cambiaba la entrada de la red y hundía la accuracy. Ahora la evaluación fija los
+    params efectivos del entrenamiento (400 si se pide otro num_steps) y el predict
+    recorre siempre con la trayectoria real."""
     c, manager = client
     dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
-    seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))  # stride 7
+    seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))  # num_steps 9
 
     # la config del secuenciador registra la trayectoria efectiva
     seq_cfg = c.get(f"/api/experiments/{seq_id}").json()["config"]
-    assert seq_cfg["dataset"]["params"] == {"stride": 7, "window_size": 14}
+    assert seq_cfg["dataset"]["params"] == {"num_steps": 9, "window_size": 14}
 
-    # evaluar con otro stride → 400 con la razón
+    # evaluar con otro num_steps → 400 con la razón
     r = c.post("/api/evaluations", json={
         "experiment": seq_id, "split": "test", "limit": 16,
-        "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 4}}})
+        "dataset": {"name": "mnist_contour_sequences", "params": {"num_steps": 4}}})
     assert r.status_code == 400
-    assert "stride=7" in r.json()["detail"]
+    assert "num_steps=9" in r.json()["detail"]
 
     # sin params → se fijan los efectivos y quedan registrados en la config
     r = c.post("/api/evaluations", json={
         "experiment": seq_id, "split": "test", "limit": 16,
-        "dataset": {"name": "mnist_sliding_sequences", "params": {}}})
+        "dataset": {"name": "mnist_contour_sequences", "params": {}}})
     assert r.status_code == 200, r.json()
     eval_id = r.json()["evaluation_id"]
     _wait(manager, eval_id)
     info = c.get(f"/api/evaluations/{eval_id}").json()
     assert info["status"]["status"] == "completed", info["status"].get("error")
-    assert info["config"]["dataset"]["params"] == {"window_size": 14, "stride": 7}
-    # trayectoria de entrenamiento: ventana 14, stride 7 → 9 pasos
+    assert info["config"]["dataset"]["params"] == {"window_size": 14, "num_steps": 9}
     assert len(info["status"]["summary"]["per_step_acc"]) == 9
 
-    # el predict ignora un stride engañoso y usa el del entrenamiento
+    # el predict ignora un num_steps engañoso y usa el del entrenamiento
     r = c.post("/api/predict", json={
         "experiment": seq_id, "split": "test", "index": 0,
-        "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 4}}})
+        "dataset": {"name": "mnist_contour_sequences", "params": {"num_steps": 4}}})
     assert r.status_code == 200, r.json()
     t = r.json()["trace"]
-    assert t["kind"] == "secuenciador" and t["stride"] == 7
+    assert t["kind"] == "secuenciador" and t["num_steps"] == 9
     assert len(t["steps"]) == len(t["positions"]) == 9
 
 
@@ -308,7 +295,7 @@ def test_api_dimensionador_descriptor_eval_and_secuenciador(client):
     c, manager = client
 
     # dimensionador de descriptores con ventana 14 (para que el secuenciador tenga
-    # dónde deslizar: 14, stride 7 → 9 pasos)
+    # dónde deslizar)
     dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
 
     # evaluación: resumen con estadísticas de descriptores (matriz 4×4 de categorías)
@@ -335,7 +322,7 @@ def test_api_dimensionador_descriptor_eval_and_secuenciador(client):
     seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))
     r = c.post("/api/predict", json={
         "experiment": seq_id, "split": "test", "index": 0,
-        "dataset": {"name": "mnist_sliding_sequences", "params": {}}})
+        "dataset": {"name": "mnist_contour_sequences", "params": {}}})
     assert r.status_code == 200, r.json()
     t = r.json()["trace"]
     assert t["kind"] == "secuenciador" and len(t["steps"]) == 9
@@ -430,7 +417,7 @@ def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
 
     # dataset incompatible → 400 con razón
     r = c.post("/api/evaluations", json={
-        "experiment": exp_id, "dataset": {"name": "mnist_sliding_sequences", "params": {}},
+        "experiment": exp_id, "dataset": {"name": "mnist_contour_sequences", "params": {}},
     })
     assert r.status_code == 400
     assert "no es compatible" in r.json()["detail"]

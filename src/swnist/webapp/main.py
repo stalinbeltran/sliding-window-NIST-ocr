@@ -22,7 +22,6 @@ from swnist.data import registry as data_registry
 from swnist.data.custom import slugify
 from swnist.data.datasets import IMAGE_SIZE
 from swnist.data.registry import list_datasets
-from swnist.data.windows import grid_positions
 from swnist.evaluation.registry import EvaluationRegistry
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.nn_registry import list_nns
@@ -67,7 +66,6 @@ class PredictRequest(BaseModel):
     split: str = "test"
     index: int
     seed: int = 42
-    stride: int = 7          # paso del trace del dimensionador
 
 
 class SaveDatasetRequest(BaseModel):
@@ -124,27 +122,25 @@ def api_datasets(nn: str | None = None):
 
 @app.get("/api/datasets/{name}/slide")
 def api_dataset_slide(name: str, window_size: int | None = None,
-                      stride: int | None = None, num_steps: int | None = None,
+                      num_steps: int | None = None,
                       stroke_width: int | None = None,
                       split: str = "train", index: int = 0, seed: int = 42):
     """Recorrido de la ventana deslizante de un dataset, para visualizarlo y
-    verificar el stride/num_steps sin tener que lanzar una prueba.
-    window_size/stride/num_steps/stroke_width sobrescriben los efectivos del
-    dataset (solo para la visualización). En los datasets que siguen el trazo
-    (num_steps) el recorrido depende de la muestra: se calcula sobre
-    (split, index), con el trazo uniformizado si stroke_width > 0."""
-    info = _400(data_registry.dataset_info, name)
+    verificar la trayectoria sin tener que lanzar una prueba.
+    window_size/num_steps/stroke_width sobrescriben los efectivos del dataset
+    (solo para la visualización). El recorrido sigue el trazo, así que depende de
+    la muestra: se calcula sobre (split, index), con el trazo uniformizado si
+    stroke_width > 0."""
+    _400(data_registry.dataset_info, name)
     eff = _400(data_registry.effective_params, name, {})
-    uses_stride = "stride" in eff
 
     # Datasets de ventanas sueltas (synthetic_strokes): cada muestra ES una ventana
     # (el dimensionador la describe); no hay recorrido deslizante que animar.
-    if "num_steps" not in eff and "stride" not in eff:
+    if "num_steps" not in eff:
         ws = int(eff.get("window_size", IMAGE_SIZE))
         return {
             "name": name, "image_size": ws, "window_size": ws,
-            "stride": None, "num_steps": None, "dataset_uses_stride": False,
-            "follows_content": False, "single_window": True,
+            "num_steps": None, "follows_content": False, "single_window": True,
             "effective_defaults": eff,
             "full_image": True, "steps": 1, "axis_coords": [],
             "positions": [[0, 0]],
@@ -162,54 +158,26 @@ def api_dataset_slide(name: str, window_size: int | None = None,
         raise HTTPException(400, f"stroke_width debe estar entre 0 y {IMAGE_SIZE} "
                                  f"(0 = trazo original); recibido: {sw}.")
 
-    if "num_steps" in eff:
-        # Trayectoria por el trazo: el recorrido es de la muestra concreta.
-        ns = int(num_steps) if num_steps is not None else int(eff["num_steps"])
-        if ns < 2:
-            raise HTTPException(400, f"num_steps debe ser ≥ 2; recibido: {ns}.")
-        ds = _400(inference.get_dataset, name,
-                  {"window_size": ws, "num_steps": ns, "stroke_width": sw},
-                  split == "train", seed)
-        if not 0 <= index < len(ds):
-            raise HTTPException(400, f"Índice fuera de rango: {index} (el dataset "
-                                     f"tiene {len(ds)} muestras).")
-        positions = ds.trajectory(index)
-        return {
-            "name": name, "image_size": IMAGE_SIZE, "window_size": ws,
-            "stroke_width": sw,
-            "stride": None, "num_steps": ns, "dataset_uses_stride": False,
-            "follows_content": True, "effective_defaults": eff,
-            "full_image": True, "steps": len(positions), "axis_coords": [],
-            "positions": [list(p) for p in positions],
-            "note": "La trayectoria sigue el trazo del carácter (esqueleto → "
-                    "camino → num_steps posiciones), así que cambia con cada "
-                    "muestra: elige otra en Split / muestra para compararlas.",
-        }
-
-    st = int(stride) if stride is not None else int(eff.get("stride", 7))
-    if st < 1:
-        raise HTTPException(400, f"stride debe ser ≥ 1; recibido: {st}.")
-    positions = grid_positions(IMAGE_SIZE, ws, st) if ws < IMAGE_SIZE else [(0, 0)]
-    axis = sorted({p[0] for p in positions})
-    notes = []
-    if ws >= IMAGE_SIZE:
-        notes.append("La ventana cubre toda la imagen: el recorrido colapsa a 1 paso.")
-    elif st > ws:
-        notes.append(f"stride ({st}) > ventana ({ws}): quedan franjas de hasta "
-                     f"{st - ws} px sin ver entre posiciones consecutivas (solo el "
-                     f"borde final se cubre siempre).")
-    elif st < ws:
-        notes.append(f"Ventanas solapadas: {ws - st} px de solape entre posiciones "
-                     f"consecutivas.")
+    # Trayectoria por el trazo: el recorrido es de la muestra concreta.
+    ns = int(num_steps) if num_steps is not None else int(eff["num_steps"])
+    if ns < 2:
+        raise HTTPException(400, f"num_steps debe ser ≥ 2; recibido: {ns}.")
+    ds = _400(inference.get_dataset, name,
+              {"window_size": ws, "num_steps": ns, "stroke_width": sw},
+              split == "train", seed)
+    if not 0 <= index < len(ds):
+        raise HTTPException(400, f"Índice fuera de rango: {index} (el dataset "
+                                 f"tiene {len(ds)} muestras).")
+    positions = ds.trajectory(index)
     return {
-        "name": name, "image_size": IMAGE_SIZE, "window_size": ws, "stride": st,
-        "stroke_width": sw,
-        "num_steps": None, "dataset_uses_stride": uses_stride,
-        "follows_content": False, "effective_defaults": eff,
-        "full_image": info.get("full_image", True),
-        "steps": len(positions), "axis_coords": axis,
+        "name": name, "image_size": IMAGE_SIZE, "window_size": ws,
+        "stroke_width": sw, "num_steps": ns,
+        "follows_content": True, "effective_defaults": eff,
+        "full_image": True, "steps": len(positions), "axis_coords": [],
         "positions": [list(p) for p in positions],
-        "note": " ".join(notes),
+        "note": "La trayectoria sigue el trazo del carácter (esqueleto → "
+                "camino → num_steps posiciones), así que cambia con cada "
+                "muestra: elige otra en Split / muestra para compararlas.",
     }
 
 
@@ -348,7 +316,7 @@ def api_eval_results(eval_id: str, result: str = "all", ambiguity: float = 0.2,
 
 
 def _eval_ds_params(cfg: dict) -> dict:
-    """Params efectivos del dataset de una evaluación (ventana Y stride del
+    """Params efectivos del dataset de una evaluación (ventana Y trayectoria del
     entrenamiento del secuenciador) — para que las miniaturas y el predict
     apunten a la misma muestra. Las evaluaciones nuevas ya guardan estos valores
     en su config; esto corrige también las antiguas."""
@@ -482,7 +450,7 @@ def api_custom_delete(name: str):
 @app.post("/api/predict")
 def api_predict(req: PredictRequest):
     return _400(inference.predict_sample, registry, req.experiment, req.dataset,
-                req.split, req.index, req.seed, req.stride)
+                req.split, req.index, req.seed)
 
 
 # ---------- frontend ----------

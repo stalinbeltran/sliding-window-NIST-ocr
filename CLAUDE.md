@@ -52,7 +52,7 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     2026-07-11: solo se sincronizaba al cambiar el desplegable de dataset, y editar
     los params a mano dejaba `model.window_size` desfasado → 400). Con `init_from`
     no se toca (la arquitectura la dicta el experimento origen). También se validan los valores:
-    `window_size` ∈ [1, 28], `windows_per_image`/`stride` ≥ 1. El dimensionador
+    `window_size` ∈ [1, 28], `num_steps` ≥ 2. El dimensionador
     de un secuenciador debe tener `window_size` < 28: con ventana 28 el recorrido
     colapsa a 1 solo paso y no hay secuenciación (400 con razón). La config del
     secuenciador guarda en `dataset.params.window_size` el valor efectivo (el del
@@ -82,7 +82,7 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     - **Generado desde un base con params a medida** (pestaña Datasets, 2026-07-12;
       `POST /api/custom-datasets` → `data.registry.create_custom_from_base`): las mismas
       imágenes MNIST del split (todas, o las primeras `limit`), pero con el recorrido
-      (`window_size`, `num_steps`/`stride`) y el `stroke_width` que estás
+      (`window_size`, `num_steps`) y el `stroke_width` que estás
       previsualizando en el visualizador **congelados** en su definición (se guardan los
       params *efectivos*, no los del formulario). Sirve para entrenar/evaluar siempre con
       ese recorrido (reglas 20 y 21) sin depender de lo que ponga cada config. Solo se
@@ -111,37 +111,47 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     cambiar `windows_per_image` en un custom se rechaza (400) porque invalidaría
     los índices guardados.
 
-20. **Stride del secuenciador fijado de extremo a extremo** (2026-07-11): la trayectoria
-    (posiciones (x, y) por paso) es ENTRADA de la red, así que el stride efectivo queda
-    registrado en la config al entrenar (`validate_train_config`) y las evaluaciones y
-    el predict la reutilizan obligatoriamente
-    (`swnist.validation.sequence_effective_params`; evaluar con otro stride → 400 con
-    razón; runner y predict lo fijan también por defensa, y la config de la evaluación
-    guarda los valores efectivos). Bug original: secuenciador entrenado con stride 5
-    (36 pasos) evaluado con el stride 7 de los defaults del formulario (25 pasos) caía
-    de acc 0.91 a 0.56. `GET /api/datasets/<name>/slide` devuelve el recorrido
-    (posiciones, pasos, notas de solape/huecos) y la pestaña Datasets tiene un
-    visualizador que anima ventana+stride (editables, solo visualización) sobre el mapa
-    de píxeles de una muestra; el trace de predict incluye el stride efectivo. Los
-    datasets de ventanas (mnist_full/mnist_windows) solo usan su stride con
-    sampling='raster' (regla 24); con sampling='random' (default) es inerte.
+20. **Trayectoria del secuenciador fijada de extremo a extremo** (2026-07-11): la
+    trayectoria (posiciones (x, y) por paso) es ENTRADA de la red, así que sus
+    parámetros efectivos (`TRAJECTORY_KEYS` en `validation.py`; hoy `num_steps`)
+    quedan registrados en la config al entrenar (`validate_train_config`) y las
+    evaluaciones y el predict los reutilizan obligatoriamente
+    (`swnist.validation.sequence_effective_params`; evaluar con otra trayectoria → 400
+    con razón; runner y predict la fijan también por defensa, y la config de la
+    evaluación guarda los valores efectivos). Bug original: secuenciador entrenado con
+    una trayectoria de 36 pasos y evaluado con la de 25 de los defaults del formulario
+    caía de acc 0.91 a 0.56. `GET /api/datasets/<name>/slide` devuelve el recorrido
+    (posiciones, pasos, notas) y la pestaña Datasets tiene un visualizador que lo anima
+    (params editables, solo visualización) sobre el mapa de píxeles de una muestra.
+    **NOTA (2026-07-12):** el **recorrido raster se eliminó** (branch
+    `feature/posicion-relativa`): no aportaba señal —con posición relativa (regla 26)
+    los deltas de un barrido son constantes y no describen la forma—. Se borraron el
+    dataset `mnist_sliding_sequences`, `data/windows.grid_positions` y el parámetro
+    `stride` de todo el código (datasets, validación, API, UI y tests). El único
+    recorrido es el que sigue el trazo (regla 21) y el único param de trayectoria es
+    `num_steps`.
 
 21. **Trayectoria guiada por el contenido** (2026-07-11, branch
-    `feature/trayectoria-por-contenido`): `mnist_contour_sequences` hace que la ventana
+    `feature/trayectoria-por-contenido`): `mnist_contour_sequences` —desde 2026-07-12,
+    el **único** dataset del secuenciador (regla 20)— hace que la ventana
     siga la 'forma' del carácter en vez de escanear el área en raster: tinta binarizada
     → esqueleto de ~1 px (Zhang-Suen, numpy puro) → camino ordenado (vecino más cercano
     desde un extremo del trazo) → remuestreo a `num_steps` posiciones fijas
     (`src/swnist/data/trajectory.py`). T = `num_steps` es constante (batching y accuracy
     por paso lo requieren); la trayectoria depende de cada muestra pero es determinista
-    (sin RNG; cacheada por índice en el dataset). `num_steps` es un parámetro de
-    trayectoria como el stride (regla 20): se fija en la config al entrenar y
-    evaluaciones/predict lo reutilizan obligatoriamente; además, evaluar un secuenciador
-    con un dataset de OTRO tipo de recorrido (raster↔trazo) es 400 con razón
-    (`TRAJECTORY_KEYS` en `validation.py`). Los datasets de secuencias exponen
-    `trajectory(idx)` (posiciones (top, left) de la muestra; `CustomSubset` delega) y lo
-    usan el trace de predict y `GET /api/datasets/<name>/slide` (que acepta
-    `split`/`index`/`num_steps` para los datasets de trazo, porque el recorrido cambia
-    con la muestra; el visualizador de la pestaña Datasets lo anima igual).
+    (sin RNG; cacheada por índice en el dataset). `num_steps` es EL parámetro de
+    trayectoria (regla 20): se fija en la config al entrenar y evaluaciones/predict lo
+    reutilizan obligatoriamente (`TRAJECTORY_KEYS` en `validation.py`). Los datasets de
+    secuencias exponen `trajectory(idx)` (posiciones (top, left) de la muestra;
+    `CustomSubset` delega) y lo usan el trace de predict y
+    `GET /api/datasets/<name>/slide` (que acepta `split`/`index`/`num_steps`, porque el
+    recorrido cambia con la muestra; el visualizador de la pestaña Datasets lo anima).
+    **Ojo con la distancia entre frames**: el remuestreo es *equiespaciado por longitud
+    de arco* (`resample_path`), así que dentro de una muestra la distancia entre
+    ventanas consecutivas es ~constante (≈ L/(T−1), con L el largo del esqueleto) y los
+    saltos entre componentes desconectadas del trazo se **interpolan** en pasos iguales
+    (se manifiestan como ventanas sin tinta, no como un salto de distancia). Para que la
+    distancia por paso sea una señal útil hay que dejar de interpolar esos saltos.
 
 22. **Clase "no hay nada en este recuadro"** (2026-07-12): los datasets de ventanas
     (`mnist_full`/`mnist_windows` y sus customs) aceptan `empty_fraction` ∈ [0, 1):
@@ -198,9 +208,10 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     entrenamiento a las evaluaciones; en `GET /api/datasets/<name>/slide` el
     visualizador muestra la grilla y aclara cuándo el stride del dataset aplica
     (`dataset_uses_stride` = raster) o es inerte (random).
-    **NOTA (2026-07-12):** retirada para el dimensionador junto con los datasets NIST
-    (regla 25). El muestreo raster ya no existe (mnist_full/mnist_windows eliminados);
-    los datasets de secuencias conservan su `stride` como parámetro de trayectoria.
+    **NOTA (2026-07-12):** regla retirada por completo. El muestreo raster desapareció
+    con los datasets NIST del dimensionador (regla 25) y el `stride` del secuenciador
+    se eliminó al quitar el recorrido raster (regla 20): ya no existe `stride` en
+    ningún dataset.
 
 25. **Dimensionador de descriptores geométricos sobre trazos sintéticos** (2026-07-12,
     branch `feature/dimensionador-descriptores`): el dimensionador dejó de clasificar
@@ -252,8 +263,8 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     produce la misma secuencia de deltas) y describe el *movimiento* a lo largo del
     trazo, que es la señal que interesa con el recorrido por contorno (regla 21) —por
     eso el dataset por defecto del secuenciador pasa a ser `mnist_contour_sequences`.
-    Con recorrido raster los deltas son casi constantes (el mismo paso en toda muestra):
-    sigue permitido (ablación legítima) pero la posición deja de informar. La
+    Con recorrido raster los deltas eran casi constantes (el mismo paso en toda muestra)
+    y la posición dejaba de informar: por eso ese recorrido se eliminó (regla 20). La
     codificación es **contrato de entrada, no opción**: se registra en
     `config.model.position_encoding = "delta"` (`validate_train_config`; otro valor →
     400 con razón) y viaja en el checkpoint. Los secuenciadores **entrenados antes de
@@ -298,8 +309,9 @@ Dos redes neuronales:
   posición).
 - Genera un **estado interno** que se retroalimenta a la misma red (celda GRU o Elman) y
   una **salida** con el dígito reconocido (logits por paso).
-- Aprende a reconocer la entrada vista **por partes**, recorriendo la imagen con una
-  ventana deslizante (orden raster por defecto).
+- Aprende a reconocer la entrada vista **por partes**, recorriendo el carácter con una
+  ventana que sigue su trazo (`mnist_contour_sequences`, regla 21: es el único
+  recorrido; el barrido raster se eliminó, regla 20).
 - El dimensionador usado se referencia por **id de experimento** (checkpoint `best.pt`) y
   por defecto va congelado (`freeze_dimensionador: true`).
 
@@ -316,11 +328,11 @@ src/swnist/
   nn_registry.py           ← catálogo de NNs entrenables + configs por defecto
   validation.py            ← compatibilidad NN↔dataset↔checkpoint (razones claras, 400)
   data/
-    windows.py             ← utilidades de ventana deslizante (posiciones, extracción)
+    windows.py             ← extracción/normalización de la ventana (sin grid raster)
     trajectory.py          ← trayectoria por el trazo: esqueleto → camino → num_steps (regla 21)
     strokes.py             ← uniformización del grosor de trazo (stroke_width, regla 23)
     synthstrokes.py        ← dataset sintético de rectas/curvas del dimensionador (regla 25)
-    datasets.py            ← MnistSlidingSequences, MnistContourSequences (secuenciador)
+    datasets.py            ← MnistContourSequences (secuenciador)
     custom.py              ← datasets custom: CustomDatasetStore (CRUD) + CustomSubset
     registry.py            ← catálogo de datasets (builtin+custom) + compatibilidad por NN
   models/

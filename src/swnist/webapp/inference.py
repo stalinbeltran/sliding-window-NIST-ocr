@@ -15,9 +15,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from swnist.data.datasets import IMAGE_SIZE
 from swnist.data.registry import build_dataset, dataset_info
-from swnist.data.windows import extract_window, grid_positions
 from swnist.descriptors import (CATEGORIES, IDX, NAMES, activate,
                                 boundary_margin, category_index, decode_angle)
 from swnist.evaluation.runner import load_model
@@ -81,12 +79,11 @@ def get_samples(name: str, params: dict, split: str, seed: int,
 
 @torch.no_grad()
 def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: dict,
-                   split: str, index: int, seed: int = 42, stride: int = 7) -> dict:
+                   split: str, index: int, seed: int = 42) -> dict:
     """Aplica la NN del experimento a una muestra y devuelve predicción + trace.
 
-    El trace (deslizamiento paso a paso) se incluye cuando la muestra es una
-    imagen completa: para el secuenciador es su recorrido real; para el
-    dimensionador se desliza su ventana (window_size del modelo) con `stride`.
+    El trace (deslizamiento paso a paso) solo lo tiene el secuenciador: es su
+    recorrido real por el trazo. Para el dimensionador la muestra ES la ventana.
     """
     device = get_device()
     nn_name, model, exp_cfg = get_model(exp_registry, exp_id)
@@ -96,8 +93,8 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
     info = dataset_info(ds_name)
 
     if nn_name == "secuenciador":
-        # Ventana Y stride: los efectivos del entrenamiento (la trayectoria es
-        # entrada de la red); un stride distinto en la petición se ignora.
+        # Ventana Y num_steps: los efectivos del entrenamiento (la trayectoria es
+        # entrada de la red); otro valor en la petición se ignora.
         ds_params.update(sequence_effective_params(exp_cfg, exp_registry))
 
     ds = get_dataset(ds_name, ds_params, train=(split == "train"), seed=seed)
@@ -127,12 +124,11 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
         probs_seq = F.softmax(logits_seq[0], dim=-1)  # (T, C)
         out.update(_pred_fields(probs_seq[-1]))
         ws = int(dim_model.config["window_size"])
-        # Recorrido real de la muestra: fijo (raster) o derivado del trazo (contour)
+        # Recorrido real de la muestra (derivado de su trazo)
         traj = getattr(ds, "trajectory", None)
         positions = traj(index) if traj is not None else []
         out["trace"] = {
             "window_size": ws,
-            "stride": ds_params.get("stride"),
             "num_steps": ds_params.get("num_steps"),
             "positions": [list(p) for p in positions],
             "steps": [_step_fields(p) for p in probs_seq],

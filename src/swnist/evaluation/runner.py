@@ -71,7 +71,7 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     dim_model = None
     if nn_name == "secuenciador":
         _, dim_model, _ = load_model(exp_registry, exp_cfg["dimensionador_experiment"], device)
-        # Ventana Y stride los dicta el entrenamiento (la trayectoria es entrada
+        # Ventana Y num_steps los dicta el entrenamiento (la trayectoria es entrada
         # de la red). validate_eval_config ya los fijó en la config; esto cubre
         # también a quien llame al runner directamente.
         ds_params.update(sequence_effective_params(exp_cfg, exp_registry))

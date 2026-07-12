@@ -198,15 +198,15 @@
   <!-- ==================== DATASETS ==================== -->
   <main id="tab-datasets" class="tab-page" hidden>
     <section class="panel" id="panel-slide">
-      <h2>Visualizar deslizamiento (window_size / stride / num_steps / stroke_width)</h2>
+      <h2>Visualizar deslizamiento (window_size / num_steps / stroke_width)</h2>
       <p class="hint">Anima el recorrido de la ventana sobre el mapa de píxeles de una
         muestra del dataset. Los valores iniciales son los efectivos del dataset y se
         pueden editar aquí para explorar (editarlos no cambia el dataset elegido: la
         trayectoria real de un entrenamiento se define en su config, y las pruebas de un
         secuenciador usan obligatoriamente la de su entrenamiento). Si te gusta lo que
-        ves, guárdalo como un dataset nuevo con el formulario de más abajo. En los
-        datasets que siguen el trazo
-        (num_steps) el recorrido depende de la muestra elegida. stroke_width &gt; 0
+        ves, guárdalo como un dataset nuevo con el formulario de más abajo. El recorrido
+        sigue el trazo del carácter (num_steps posiciones), así que depende de la
+        muestra elegida. stroke_width &gt; 0
         redibuja el carácter con trazo de grosor uniforme (previsualízalo aquí; para
         entrenar con el dataset uniformizado pon el mismo valor en
         <code>dataset.params.stroke_width</code> en Entrenar).</p>
@@ -228,10 +228,6 @@
         <div>
           <label for="slide-ws">window_size</label>
           <input id="slide-ws" type="number" min="1" max="28">
-        </div>
-        <div>
-          <label for="slide-stride">stride</label>
-          <input id="slide-stride" type="number" min="1">
         </div>
         <div>
           <label for="slide-steps">num_steps</label>
@@ -259,7 +255,7 @@
 
       <h3 style="margin-top:1rem">Crear un dataset con estos parámetros</h3>
       <p class="hint">Guarda lo que estás viendo como un dataset nuevo: las mismas
-        imágenes de MNIST, pero con este recorrido (window_size, num_steps/stride) y
+        imágenes de MNIST, pero con este recorrido (window_size, num_steps) y
         este grosor de trazo <strong>congelados</strong>. Aparecerá en Entrenar y en
         Probar como cualquier otro dataset, y su recorrido será el que use el
         secuenciador que entrenes con él.</p>

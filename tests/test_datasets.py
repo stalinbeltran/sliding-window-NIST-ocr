@@ -3,25 +3,14 @@
 import pytest
 import torch
 
-from swnist.data.datasets import (IMAGE_SIZE, MnistContourSequences,
-                                  MnistSlidingSequences)
+from swnist.data.datasets import IMAGE_SIZE, MnistContourSequences
 from swnist.data.registry import (build_dataset, effective_window_size,
                                   list_datasets, validate_dataset_params)
 from swnist.data.synthstrokes import STROKE_DEFAULTS, SyntheticStrokes
 from swnist.data.trajectory import (contour_positions, ink_mask, order_path,
                                     resample_path, skeletonize)
-from swnist.data.windows import extract_window, grid_positions, normalize_position
+from swnist.data.windows import extract_window, normalize_position
 from swnist.descriptors import IDX, NUM_DESCRIPTORS, category_index
-
-
-def test_grid_positions_covers_borders():
-    pos = grid_positions(28, 14, 7)
-    assert pos[0] == (0, 0)
-    assert (14, 14) in pos  # última posición pegada al borde
-    assert len(pos) == 9  # coords {0, 7, 14} en cada eje
-    # Stride que no divide exacto: igual incluye el borde
-    pos2 = grid_positions(28, 14, 9)
-    assert max(p[0] for p in pos2) == 14
 
 
 def test_extract_window_shape():
@@ -165,17 +154,6 @@ def test_custom_dataset_of_strokes_rejects_param_change(tmp_custom_store):
 
 # ---------- secuencias (secuenciador) ----------
 
-def test_mnist_sliding_sequences_item():
-    ds = MnistSlidingSequences(train=True, window_size=14, stride=7)
-    windows, positions, label = ds[0]
-    T = ds.sequence_length
-    assert T == 9
-    assert windows.shape == (T, 1, 14, 14)
-    assert positions.shape == (T, 2)
-    assert positions.min() >= 0 and positions.max() <= 1
-    assert 0 <= label <= 9
-
-
 def _synthetic_stroke() -> torch.Tensor:
     """Imagen normalizada con un trazo vertical de 3 px de grosor (col 13-15)."""
     raw = torch.zeros(1, IMAGE_SIZE, IMAGE_SIZE)
@@ -258,7 +236,7 @@ def test_list_datasets_filters_by_nn():
     for d in list_datasets("dimensionador"):
         assert "dimensionador" in d["compatible_with"]
     seq = [d["name"] for d in list_datasets("secuenciador") if not d["custom"]]
-    assert seq == ["mnist_sliding_sequences", "mnist_contour_sequences"]
+    assert seq == ["mnist_contour_sequences"]
 
 
 def test_build_dataset_unknown_name():
@@ -274,17 +252,15 @@ def test_build_dataset_rejects_params_of_other_dataset():
 
 def test_build_dataset_rejects_invalid_param_values():
     with pytest.raises(ValueError, match="window_size debe ser"):
-        build_dataset("mnist_sliding_sequences", {"window_size": 0}, train=True, seed=42)
+        build_dataset("mnist_contour_sequences", {"window_size": 0}, train=True, seed=42)
     with pytest.raises(ValueError, match="num_steps debe ser"):
         build_dataset("mnist_contour_sequences", {"num_steps": 1}, train=True, seed=42)
-    # cada dataset de secuencias acepta solo su propio parámetro de trayectoria
+    # el recorrido raster (stride) se eliminó: ya no es un parámetro de ningún dataset
     with pytest.raises(ValueError, match="Parámetros no válidos"):
         build_dataset("mnist_contour_sequences", {"stride": 7}, train=True, seed=42)
-    with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_sliding_sequences", {"num_steps": 8}, train=True, seed=42)
 
 
 def test_effective_window_size_follows_params():
     assert effective_window_size("synthetic_strokes", {}) == 5
     assert effective_window_size("synthetic_strokes", {"window_size": 7}) == 7
-    assert effective_window_size("mnist_sliding_sequences", {"window_size": 7}) == 7
+    assert effective_window_size("mnist_contour_sequences", {"window_size": 7}) == 7
