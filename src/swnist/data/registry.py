@@ -20,8 +20,8 @@ DATASETS = {
                        "grosor del trazo a ~N px (0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistFull,
-        "defaults": {"window_size": 28, "windows_per_image": 1, "sampling": "random",
-                     "stride": 7, "empty_fraction": 0.0, "stroke_width": 0},
+        "defaults": {"window_size": 5, "windows_per_image": 30, "sampling": "raster",
+                     "stride": 5, "empty_fraction": 0.1, "stroke_width": 1},
         "full_image": True,   # la muestra visible es una imagen completa 28×28
     },
     "mnist_windows": {
@@ -34,8 +34,8 @@ DATASETS = {
                        "(0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistWindows,
-        "defaults": {"window_size": 14, "windows_per_image": 4, "sampling": "random",
-                     "stride": 7, "empty_fraction": 0.0, "stroke_width": 0},
+        "defaults": {"window_size": 5, "windows_per_image": 4, "sampling": "raster",
+                     "stride": 5, "empty_fraction": 0.1, "stroke_width": 1},
         "full_image": False,
     },
     "mnist_sliding_sequences": {
@@ -44,7 +44,7 @@ DATASETS = {
                        "~N px (0 = original).",
         "compatible_with": ["secuenciador"],
         "builder": MnistSlidingSequences,
-        "defaults": {"window_size": 14, "stride": 7, "stroke_width": 0},
+        "defaults": {"window_size": 14, "stride": 7, "stroke_width": 1},
         "full_image": True,
     },
     "mnist_contour_sequences": {
@@ -55,7 +55,7 @@ DATASETS = {
                        "(0 = original).",
         "compatible_with": ["secuenciador"],
         "builder": MnistContourSequences,
-        "defaults": {"window_size": 14, "num_steps": 12, "stroke_width": 0},
+        "defaults": {"window_size": 14, "num_steps": 12, "stroke_width": 1},
         "full_image": True,
     },
 }
