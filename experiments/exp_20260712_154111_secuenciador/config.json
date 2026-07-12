@@ -1,0 +1,30 @@
+{
+  "nn": "secuenciador",
+  "dimensionador_experiment": "exp_20260712_142332_dimensionador",
+  "freeze_dimensionador": true,
+  "dataset": {
+    "name": "mnist_contour_sequences",
+    "params": {
+      "window_size": 5,
+      "num_steps": 12,
+      "stroke_width": 1
+    }
+  },
+  "model": {
+    "hidden_dim": 128,
+    "num_classes": 10,
+    "cell": "gru",
+    "position_encoding": "delta"
+  },
+  "training": {
+    "epochs": 5,
+    "batch_size": 128,
+    "lr": 0.001,
+    "weight_decay": 0,
+    "seed": 42,
+    "val_fraction": 0.1,
+    "log_every": 50,
+    "loss_mode": "all"
+  },
+  "init_from": "exp_20260712_152151_secuenciador"
+}
