@@ -6,8 +6,11 @@ o la evaluación, para que la API responda 400 con la razón en vez de dejar un
 experimento fallido.
 """
 
+import torch
+
 from swnist.data import registry as data_registry
 from swnist.data.datasets import IMAGE_SIZE
+from swnist.descriptors import NAMES, NUM_DESCRIPTORS
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.nn_registry import NNS
 
@@ -53,6 +56,30 @@ def _model_window(config: dict) -> int | None:
 # Parámetros que definen la trayectoria de un dataset de secuencias: stride en
 # el recorrido raster, num_steps en el recorrido por el trazo (contour).
 TRAJECTORY_KEYS = ("stride", "num_steps")
+
+
+def dimensionador_feature_dim(registry: ExperimentRegistry, exp_id: str) -> int:
+    """Tamaño del vector de features (descriptores) de un dimensionador entrenado.
+
+    `feature_dim` lo fija el contrato de descriptores, así que las configs nuevas lo
+    registran pero las anteriores no lo tienen (bug del 2026-07-12: leerlo a pelo de
+    config.model reventaba con KeyError → 500 al re-entrenar un secuenciador). Se
+    resuelve en orden: config del experimento → checkpoint → contrato actual.
+    """
+    exp = registry.get_experiment(exp_id)
+    fd = (exp["config"].get("model") or {}).get("feature_dim")
+    if fd is not None:
+        return int(fd)
+    ckpt = registry.checkpoints_dir(exp_id) / "best.pt"
+    if ckpt.exists():
+        try:
+            data = torch.load(ckpt, map_location="cpu", weights_only=False)
+            fd = (data.get("model_config") or {}).get("feature_dim")
+            if fd is not None:
+                return int(fd)
+        except Exception:  # checkpoint ilegible: cae al contrato actual
+            pass
+    return NUM_DESCRIPTORS
 
 
 def sequence_effective_params(exp_config: dict, registry: ExperimentRegistry) -> dict:
@@ -123,6 +150,19 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
                 f"elige un window_size igual en el dataset. (El secuenciador "
                 f"reutiliza el window_size del dimensionador, por eso debe "
                 f"reflejar lo realmente entrenado.)")
+        # feature_dim lo fija el contrato de descriptores: se registra en la config
+        # (para que quede trazable y el secuenciador pueda leerlo sin abrir el
+        # checkpoint). Con init_from, los pesos del origen solo cargan si se entrenó
+        # con el mismo número de descriptores.
+        if init_from:
+            fd_origin = dimensionador_feature_dim(registry, init_from)
+            if fd_origin != NUM_DESCRIPTORS:
+                raise ValueError(
+                    f"Re-entrenamiento incompatible: el dimensionador {init_from!r} se "
+                    f"entrenó con {fd_origin} descriptores, pero el contrato actual "
+                    f"tiene {NUM_DESCRIPTORS} ({', '.join(NAMES)}). Sus pesos no cargan "
+                    f"en la arquitectura actual: entrena un dimensionador nuevo.")
+        config["model"] = {**(config.get("model") or {}), "feature_dim": NUM_DESCRIPTORS}
 
     if nn == "secuenciador":
         dim_id = config.get("dimensionador_experiment")
@@ -158,9 +198,9 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
         config["dataset"] = dataset_cfg
         if init_from:
             init_dim = init_exp["config"].get("dimensionador_experiment")
-            init_dim_exp = _get_experiment(registry, init_dim, "Re-entrenamiento (init_from)")
-            fd_init = init_dim_exp["config"]["model"]["feature_dim"]
-            fd_new = dim_exp["config"]["model"]["feature_dim"]
+            _get_experiment(registry, init_dim, "Re-entrenamiento (init_from)")
+            fd_init = dimensionador_feature_dim(registry, init_dim)
+            fd_new = dimensionador_feature_dim(registry, dim_id)
             if fd_init != fd_new:
                 raise ValueError(
                     f"Re-entrenamiento incompatible: el secuenciador {init_from!r} "

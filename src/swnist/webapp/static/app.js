@@ -3,9 +3,15 @@
 // CRUD de experimentos y datasets custom.
 
 const $ = (id) => document.getElementById(id);
-const api = (path, opts) => fetch(path, opts).then((r) => {
-  if (!r.ok) return r.json().then((e) => { throw new Error(e.detail || r.statusText); });
-  return r.json();
+// Un error del servidor puede no ser JSON (p. ej. el "Internal Server Error" en
+// texto plano de un 500): se lee como texto y solo se intenta parsear, para que el
+// mensaje real llegue a la UI en vez de un "Unexpected token 'I'".
+const api = (path, opts) => fetch(path, opts).then(async (r) => {
+  const text = await r.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* respuesta no-JSON */ }
+  if (!r.ok) throw new Error(data?.detail || text || r.statusText || `HTTP ${r.status}`);
+  return data;
 });
 const post = (path, body) => api(path, {
   method: "POST", headers: { "Content-Type": "application/json" },

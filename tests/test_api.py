@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import swnist.webapp.main as main
+from swnist.descriptors import NUM_DESCRIPTORS
 from swnist.webapp.manager import TrainingManager
 
 from conftest import dim_config, seq_config
@@ -127,6 +128,35 @@ def test_api_retrain_init_from(client):
     r2 = c.post("/api/train", json={"nn": "secuenciador", "config": cfg2})
     assert r2.status_code == 400
     assert "misma arquitectura" in r2.json()["detail"]
+
+
+def test_api_dimensionador_config_records_feature_dim(client):
+    """feature_dim lo fija el contrato de descriptores y queda registrado en la config."""
+    c, manager = client
+    exp_id = _train(c, manager)
+    model = c.get(f"/api/experiments/{exp_id}").json()["config"]["model"]
+    assert model["feature_dim"] == NUM_DESCRIPTORS
+
+
+def test_api_retrain_secuenciador_init_from(client):
+    """Re-entrenar un secuenciador (init_from) NO debe reventar con 500.
+
+    Bug del 2026-07-12: la validación leía config.model['feature_dim'] del
+    dimensionador, pero ese campo dejó de guardarse al fijarlo por contrato →
+    KeyError → 500 ("Unexpected token 'I'" en la UI al parsear el error).
+    """
+    c, manager = client
+    dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
+    seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))
+
+    cfg = seq_config(dim_id, **{"init_from": seq_id})
+    r = c.post("/api/train", json={"nn": "secuenciador", "config": cfg})
+    assert r.status_code == 200, r.text  # antes: 500 Internal Server Error
+    new_id = r.json()["experiment_id"]
+    _wait(manager, new_id)
+    info = c.get(f"/api/experiments/{new_id}").json()
+    assert info["status"]["status"] == "completed", info["status"]["error"]
+    assert info["config"]["init_from"] == seq_id
 
 
 def test_api_experiments_crud(client):
