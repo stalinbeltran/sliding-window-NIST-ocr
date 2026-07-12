@@ -12,7 +12,23 @@ from swnist.data import registry as data_registry
 from swnist.data.datasets import IMAGE_SIZE
 from swnist.descriptors import NAMES, NUM_DESCRIPTORS
 from swnist.experiments.registry import ExperimentRegistry
+from swnist.models.secuenciador import POSITION_ENCODING
 from swnist.nn_registry import NNS
+
+# Un secuenciador anterior al cambio a posición relativa (2026-07-12) recibía la
+# posición ABSOLUTA (x, y): mismos shapes, entrada con otro significado, así que
+# sus pesos no son reutilizables. Se detecta por la ausencia de
+# model.position_encoding en su config (las nuevas lo registran siempre).
+_LEGACY_POSITIONS = (
+    "se entrenó con la posición absoluta (x, y) como entrada, que ya no se usa: "
+    "ahora la red recibe el desplazamiento (dx, dy) respecto al paso anterior. Sus "
+    "pesos tienen el shape correcto pero la entrada significa otra cosa, así que no "
+    "se pueden reutilizar. Entrena un secuenciador nuevo (su dimensionador se "
+    "reutiliza tal cual).")
+
+
+def _uses_relative_positions(exp_config: dict) -> bool:
+    return (exp_config.get("model") or {}).get("position_encoding") == POSITION_ENCODING
 
 
 def _get_experiment(registry: ExperimentRegistry, exp_id: str, what: str) -> dict:
@@ -85,11 +101,12 @@ def dimensionador_feature_dim(registry: ExperimentRegistry, exp_id: str) -> int:
 def sequence_effective_params(exp_config: dict, registry: ExperimentRegistry) -> dict:
     """Ventana y trayectoria con las que realmente se entrenó un secuenciador.
 
-    La trayectoria (posición (x, y) por paso) es ENTRADA de la red: cambiarla en
-    inferencia evalúa fuera de distribución (bug del 2026-07-11: entrenar con
-    stride 5 —36 pasos— y evaluar con stride 7 —25 pasos— hundía la accuracy de
-    0.91 a 0.56). window_size lo dicta su dimensionador; stride/num_steps son
-    los efectivos del dataset de entrenamiento (defaults ⊕ params).
+    La trayectoria es ENTRADA de la red (la posición por paso, de la que sale el
+    desplazamiento (dx, dy) que consume el secuenciador): cambiarla en inferencia
+    evalúa fuera de distribución (bug del 2026-07-11: entrenar con stride 5 —36
+    pasos— y evaluar con stride 7 —25 pasos— hundía la accuracy de 0.91 a 0.56).
+    window_size lo dicta su dimensionador; stride/num_steps son los efectivos del
+    dataset de entrenamiento (defaults ⊕ params).
     """
     dim_exp = _get_experiment(registry, exp_config["dimensionador_experiment"],
                               "Secuenciador: dimensionador")
@@ -196,7 +213,23 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
                 params[key] = int(eff[key])
         dataset_cfg = {**dataset_cfg, "params": params}
         config["dataset"] = dataset_cfg
+        # La codificación de la posición es parte del contrato de entrada de la red
+        # (dx, dy relativos al paso anterior): se registra en la config para que
+        # quede trazable y para distinguir los secuenciadores antiguos (absolutos).
+        enc = (config.get("model") or {}).get("position_encoding", POSITION_ENCODING)
+        if enc != POSITION_ENCODING:
+            raise ValueError(
+                f"model.position_encoding={enc!r} no existe: el secuenciador recibe "
+                f"el desplazamiento (dx, dy) respecto al paso anterior "
+                f"({POSITION_ENCODING!r}), no la posición absoluta. Quita el campo o "
+                f"ponlo en {POSITION_ENCODING!r}.")
+        config["model"] = {**(config.get("model") or {}),
+                           "position_encoding": POSITION_ENCODING}
         if init_from:
+            if not _uses_relative_positions(init_exp["config"]):
+                raise ValueError(
+                    f"Re-entrenamiento incompatible: el secuenciador {init_from!r} "
+                    f"{_LEGACY_POSITIONS}")
             init_dim = init_exp["config"].get("dimensionador_experiment")
             _get_experiment(registry, init_dim, "Re-entrenamiento (init_from)")
             fd_init = dimensionador_feature_dim(registry, init_dim)
@@ -237,6 +270,9 @@ def validate_eval_config(config: dict, registry: ExperimentRegistry) -> dict:
                 f"window_size={ws_model}).")
 
     if nn == "secuenciador":
+        if not _uses_relative_positions(exp["config"]):
+            raise ValueError(
+                f"El secuenciador {exp_id!r} {_LEGACY_POSITIONS}")
         dim_id = exp["config"].get("dimensionador_experiment")
         _get_experiment(
             registry, dim_id,
@@ -263,8 +299,8 @@ def validate_eval_config(config: dict, registry: ExperimentRegistry) -> dict:
                     f"de recorrido (p. ej. {train_ds!r} o un custom basado en él).")
         reasons = {
             "window_size": "es la ventana de su dimensionador",
-            "stride": "define la trayectoria que la red aprendió (las posiciones "
-                      "(x, y) por paso son entrada de la red); con otro stride la "
+            "stride": "define la trayectoria que la red aprendió (el desplazamiento "
+                      "(dx, dy) por paso es entrada de la red); con otro stride la "
                       "evaluación sería fuera de distribución y engañosa",
             "num_steps": "define la trayectoria que la red aprendió (el número de "
                          "pasos del recorrido por el trazo es entrada de la red); "

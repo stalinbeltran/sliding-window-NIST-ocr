@@ -5,6 +5,7 @@ import torch
 
 from swnist.descriptors import NUM_DESCRIPTORS, activate
 from swnist.models import Dimensionador, Secuenciador
+from swnist.models.secuenciador import relative_positions
 
 
 def test_dimensionador_shapes():
@@ -64,13 +65,53 @@ def test_secuenciador_step_feedback():
     """El estado interno retroalimentado debe cambiar la salida del paso siguiente."""
     m = Secuenciador(feature_dim=16, hidden_dim=32)
     m.eval()
-    feat, pos = torch.randn(1, 16), torch.rand(1, 2)
+    feat, delta = torch.randn(1, 16), torch.rand(1, 2)
     h0 = m.init_state(1)
     with torch.no_grad():
-        logits1, h1 = m.step(feat, pos, h0)
-        logits2, h2 = m.step(feat, pos, h1)  # misma entrada, estado distinto
+        logits1, h1 = m.step(feat, delta, h0)
+        logits2, h2 = m.step(feat, delta, h1)  # misma entrada, estado distinto
     assert not torch.equal(h0, h1)
     assert not torch.allclose(logits1, logits2)
+
+
+def test_relative_positions():
+    """Desplazamiento respecto al paso anterior; el primer paso no tiene anterior."""
+    pos = torch.tensor([[[0.0, 0.0], [0.2, 0.1], [0.5, 0.1]]])  # (1, 3, 2)
+    d = relative_positions(pos)
+    assert torch.allclose(d[0, 0], torch.zeros(2))
+    assert torch.allclose(d[0, 1], torch.tensor([0.2, 0.1]))
+    assert torch.allclose(d[0, 2], torch.tensor([0.3, 0.0]))
+
+
+def test_secuenciador_is_translation_invariant():
+    """La red recibe (dx, dy), no (x, y): trasladar el recorrido entero no cambia
+    la salida (el mismo trazo dibujado más a la derecha se ve igual)."""
+    m = Secuenciador(feature_dim=7, hidden_dim=16)
+    m.eval()
+    feats = torch.randn(2, 6, 7)
+    pos = torch.rand(2, 6, 2) * 0.5
+    with torch.no_grad():
+        a, _ = m(feats, pos)
+        b, _ = m(feats, pos + 0.3)          # mismo recorrido, trasladado
+        c, _ = m(feats, pos.flip(1))        # otro recorrido: sí debe cambiar
+    assert torch.allclose(a, b, atol=1e-6)
+    assert not torch.allclose(a, c)
+
+
+def test_secuenciador_rejects_absolute_positions():
+    with pytest.raises(ValueError):
+        Secuenciador(feature_dim=7, position_encoding="absolute")
+
+
+def test_secuenciador_from_config_rejects_legacy_checkpoint():
+    """Un secuenciador anterior (posición absoluta) tiene los mismos shapes pero su
+    entrada significa otra cosa: debe fallar con razón, no cargar en silencio."""
+    m = Secuenciador(feature_dim=7, hidden_dim=16)
+    assert m.config["position_encoding"] == "delta"
+    assert Secuenciador.from_config(m.config).config == m.config
+    legacy = {k: v for k, v in m.config.items() if k != "position_encoding"}
+    with pytest.raises(ValueError, match="ABSOLUTA"):
+        Secuenciador.from_config(legacy)
 
 
 def test_secuenciador_elman_cell():

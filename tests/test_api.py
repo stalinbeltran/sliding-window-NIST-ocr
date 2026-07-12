@@ -1,6 +1,8 @@
 """Tests de la API web (TestClient), incluido el flujo completo de pruebas:
 evaluación, miniaturas, filtros, datasets custom y CRUD de experimentos."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -338,6 +340,49 @@ def test_api_dimensionador_descriptor_eval_and_secuenciador(client):
     t = r.json()["trace"]
     assert t["kind"] == "secuenciador" and len(t["steps"]) == 9
     assert len(t["steps"][0]["probs"]) == 10  # la salida del secuenciador sigue siendo 0–9
+
+
+def test_api_secuenciador_relative_positions_on_contour(client, tmp_registry):
+    """El secuenciador recibe (dx, dy) respecto al paso anterior, no (x, y): el
+    encoding queda registrado en la config y un secuenciador antiguo (absoluto) se
+    rechaza con razón en vez de cargar en silencio (mismos shapes, otra entrada)."""
+    c, manager = client
+    dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
+
+    # recorrido por el trazo (el default del secuenciador): 8 pasos
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {"num_steps": 8}}
+    seq_id = _train(c, manager, "secuenciador", cfg)
+    seq_cfg = c.get(f"/api/experiments/{seq_id}").json()["config"]
+    assert seq_cfg["model"]["position_encoding"] == "delta"
+
+    r = c.post("/api/predict", json={
+        "experiment": seq_id, "split": "test", "index": 0,
+        "dataset": {"name": "mnist_contour_sequences", "params": {}}})
+    assert r.status_code == 200, r.json()
+    t = r.json()["trace"]
+    assert t["num_steps"] == 8 and len(t["steps"]) == len(t["positions"]) == 8
+
+    # pedir la posición absoluta → 400 con la razón
+    bad = seq_config(dim_id)
+    bad["model"]["position_encoding"] = "absolute"
+    r = c.post("/api/train", json={"nn": "secuenciador", "config": bad})
+    assert r.status_code == 400 and "position_encoding" in r.json()["detail"]
+
+    # secuenciador antiguo (config sin position_encoding): evaluar y re-entrenar → 400
+    path = tmp_registry.root / seq_id / "config.json"
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["model"].pop("position_encoding")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    r = c.post("/api/evaluations", json={
+        "experiment": seq_id, "split": "test", "limit": 16,
+        "dataset": {"name": "mnist_contour_sequences", "params": {}}})
+    assert r.status_code == 400 and "posición absoluta" in r.json()["detail"]
+
+    r = c.post("/api/train", json={
+        "nn": "secuenciador", "config": seq_config(dim_id, init_from=seq_id)})
+    assert r.status_code == 400 and "posición absoluta" in r.json()["detail"]
 
 
 def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):

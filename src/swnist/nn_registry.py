@@ -19,12 +19,15 @@ NNS = {
         },
     },
     "secuenciador": {
-        "description": "Red recurrente: entrada = (x, y) + salida del dimensionador; "
-                       "estado interno retroalimentado; salida = dígito reconocido.",
+        "description": "Red recurrente: entrada = desplazamiento (dx, dy) respecto al "
+                       "paso anterior + salida del dimensionador; estado interno "
+                       "retroalimentado; salida = dígito reconocido. Por defecto "
+                       "recorre el trazo del carácter (mnist_contour_sequences), que "
+                       "es donde el paso relativo describe la forma.",
         "defaults": {
             "dimensionador_experiment": None,  # requerido: id de un experimento completado
             "freeze_dimensionador": True,
-            "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 7}},
+            "dataset": {"name": "mnist_contour_sequences", "params": {"num_steps": 12}},
             "model": {"hidden_dim": 128, "num_classes": 10, "cell": "gru"},
             "training": {
                 "epochs": 5, "batch_size": 128, "lr": 0.001, "weight_decay": 0.0,

@@ -228,6 +228,29 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     (sampling raster) quedan retiradas para el dimensionador, y la parte de la regla 19
     sobre ventanas de mnist_full/mnist_windows ya no aplica (esos datasets se eliminaron).
 
+26. **Posición relativa: el secuenciador recibe (dx, dy), no (x, y)** (2026-07-12, branch
+    `feature/posicion-relativa`): la entrada posicional de cada paso es el
+    **desplazamiento respecto al paso anterior** (`relative_positions` en
+    `models/secuenciador.py`; el paso 0 no tiene anterior → (0, 0)). El **dataset no
+    cambia**: sigue entregando las posiciones absolutas normalizadas (T, 2) y el modelo
+    las deriva a deltas en el `forward`, de modo que el recorrido se sigue describiendo
+    en coordenadas de la imagen (trace de predict, visualizador de la pestaña Datasets,
+    datasets custom, `sequence_effective_params`). Consecuencia buscada: la entrada
+    posicional es **invariante a traslación** (el mismo trazo dibujado más a la derecha
+    produce la misma secuencia de deltas) y describe el *movimiento* a lo largo del
+    trazo, que es la señal que interesa con el recorrido por contorno (regla 21) —por
+    eso el dataset por defecto del secuenciador pasa a ser `mnist_contour_sequences`.
+    Con recorrido raster los deltas son casi constantes (el mismo paso en toda muestra):
+    sigue permitido (ablación legítima) pero la posición deja de informar. La
+    codificación es **contrato de entrada, no opción**: se registra en
+    `config.model.position_encoding = "delta"` (`validate_train_config`; otro valor →
+    400 con razón) y viaja en el checkpoint. Los secuenciadores **entrenados antes de
+    este cambio** (posición absoluta) tienen los mismos shapes pero su entrada significa
+    otra cosa: se detectan por la ausencia de `position_encoding` en su config y se
+    rechazan con razón al evaluar, al re-entrenar (`init_from`) y al cargarlos
+    (`Secuenciador.from_config`), en vez de cargar en silencio y dar métricas basura.
+    Los dimensionadores se reutilizan tal cual.
+
 ## Arquitectura
 
 Dos redes neuronales:
@@ -257,8 +280,10 @@ Dos redes neuronales:
 
 ### 2. Secuenciador (NN recurrente / retroalimentada)
 - `src/swnist/models/secuenciador.py`
-- Entradas por paso: **posición (x, y)** actual (normalizada a [0,1]) + **salida del
-  dimensionador** (features de la ventana en esa posición).
+- Entradas por paso: **desplazamiento (dx, dy)** respecto al paso anterior (posición
+  *relativa*, regla 26; el dataset entrega las posiciones absolutas normalizadas y el
+  modelo las convierte) + **salida del dimensionador** (features de la ventana en esa
+  posición).
 - Genera un **estado interno** que se retroalimenta a la misma red (celda GRU o Elman) y
   una **salida** con el dígito reconocido (logits por paso).
 - Aprende a reconocer la entrada vista **por partes**, recorriendo la imagen con una

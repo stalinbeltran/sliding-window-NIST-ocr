@@ -119,7 +119,15 @@ def test_secuenciador_config_records_effective_window(tmp_registry):
 
 
 def _fake_trained(registry, nn, cfg):
-    """Crea un experimento con checkpoint vacío (la validación solo mira existencia)."""
+    """Crea un experimento con checkpoint vacío (la validación solo mira existencia).
+
+    La config pasa por validate_train_config, como hace el manager al entrenar: así
+    el experimento registra lo mismo que uno real (trayectoria efectiva,
+    model.position_encoding…), que es justo lo que luego se valida.
+    """
+    from swnist.validation import validate_train_config
+
+    cfg = validate_train_config(nn, cfg, registry)
     exp_id = registry.create_experiment(nn, cfg)
     ckpt = registry.checkpoints_dir(exp_id) / "best.pt"
     ckpt.parent.mkdir(parents=True, exist_ok=True)
