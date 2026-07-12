@@ -20,9 +20,30 @@ const del = (path) => api(path, { method: "DELETE" });
 let NNS = [];
 let currentDetail = null;
 
-// Clase extra del dimensionador: "no hay nada en este recuadro" (ventana vacía).
+// Etiqueta de un dígito (10 = clase vacía histórica del secuenciador).
 const EMPTY_LABEL = 10;
 const fmtLabel = (v) => (v === EMPTY_LABEL ? "∅" : v);
+
+// Dimensionador de descriptores: contrato compartido con swnist.descriptors.
+const CATEGORIES = ["recta·continua", "recta·entrecortada",
+                    "curva·continua", "curva·entrecortada"];
+const DESC_NAMES = ["straightness", "horizontal", "vertical",
+                    "angle_sin2", "angle_cos2", "continuity"];
+
+// ¿El dataset produce trazos (dimensionador de descriptores)? Se detecta por sus
+// defaults (los datasets de trazos y sus customs exponen curved_fraction).
+function isStrokeDs(name) {
+  const pools = [typeof DATASETS !== "undefined" ? DATASETS : [],
+                 typeof TEST_DS !== "undefined" ? TEST_DS : []];
+  for (const pool of pools) {
+    const d = pool.find((x) => x.name === name);
+    if (d) return !!(d.defaults && "curved_fraction" in d.defaults);
+  }
+  return false;
+}
+
+// Etiqueta contextual: categoría de trazo o dígito.
+const labelFor = (v, isDim) => (isDim ? (CATEGORIES[v] ?? v) : fmtLabel(v));
 
 // ---------- gráficas (canvas, sin librerías) ----------
 
@@ -195,26 +216,20 @@ function onInitFromChange() {
 }
 
 function syncDimensionadorWindow(config) {
-  // model.window_size (y model.num_classes) reflejan SIEMPRE la entrada real
-  // del dataset (regla 13): ventana efectiva, y 11 clases cuando el dataset
-  // produce ventanas vacías (empty_fraction > 0, clase 'no hay nada').
-  // onDatasetChange lo sincroniza al cambiar el desplegable; esto cubre editar
-  // dataset.params a mano en el JSON. Con init_from no se toca: la
-  // arquitectura la dicta el experimento origen.
+  // model.window_size refleja SIEMPRE la entrada real del dataset (regla 13):
+  // el tamaño de ventana efectivo de synthetic_strokes. onDatasetChange lo
+  // sincroniza al cambiar el desplegable; esto cubre editar dataset.params a
+  // mano en el JSON. Con init_from no se toca: la arquitectura la dicta el
+  // experimento origen.
   if ($("nn-select").value !== "dimensionador") return false;
   if (!config || config.init_from || !config.model || !config.dataset) return false;
   const spec = DATASETS.find((d) => d.name === config.dataset.name);
   if (!spec) return false;
   let changed = false;
   const merged = { ...spec.defaults, ...(config.dataset.params || {}) };
-  const ws = merged.window_size ?? 28;
+  const ws = merged.window_size ?? 5;
   if (config.model.window_size !== ws) {
     config.model.window_size = ws;
-    changed = true;
-  }
-  const numClasses = (merged.empty_fraction ?? 0) > 0 ? EMPTY_LABEL + 1 : 10;
-  if ((config.model.num_classes ?? 10) !== numClasses) {
-    config.model.num_classes = numClasses;
     changed = true;
   }
   return changed;
@@ -400,31 +415,14 @@ function testDatasetParams() {
   if (!ds) return {};
   const params = JSON.parse(JSON.stringify(ds.defaults));
   if (exp && exp.config.nn === "dimensionador") {
+    // Mismos rangos de generación que en el entrenamiento (ángulo, longitud,
+    // curvatura, guiones, grosor…): así el set de prueba sigue la misma
+    // distribución de trazos. window_size lo dicta el modelo.
+    const tp = exp.config.dataset?.params || {};
+    for (const k of Object.keys(params)) {
+      if (tp[k] !== undefined) params[k] = tp[k];
+    }
     if ("window_size" in params) params.window_size = exp.config.model.window_size;
-    // Mismo mix de ventanas vacías que en el entrenamiento: un modelo con la
-    // clase 'no hay nada' se evalúa también sobre ella (y uno sin la clase,
-    // sin vacíos — el servidor rechaza la combinación inválida con 400).
-    if ("empty_fraction" in params) {
-      const ef = exp.config.dataset?.params?.empty_fraction;
-      params.empty_fraction = ef !== undefined ? ef : 0.0;
-    }
-    // Mismo grosor de trazo que en el entrenamiento: un modelo entrenado con
-    // el dataset uniformizado se evalúa sobre el dataset uniformizado.
-    if ("stroke_width" in params) {
-      const sw = exp.config.dataset?.params?.stroke_width;
-      params.stroke_width = sw !== undefined ? sw : 0;
-    }
-    // Mismo muestreo de ventanas que en el entrenamiento (random o raster con
-    // su stride); con sampling='random' el stride es inerte y se omite.
-    if ("sampling" in params) {
-      const tp = exp.config.dataset?.params || {};
-      params.sampling = tp.sampling ?? "random";
-      if (params.sampling === "raster") {
-        if (tp.stride !== undefined) params.stride = tp.stride;
-      } else {
-        delete params.stride;
-      }
-    }
   }
   if (exp && exp.config.nn === "secuenciador") {
     const tp = exp.config.dataset?.params || {};
@@ -472,7 +470,9 @@ async function startEvaluation() {
 function browseSamples() {
   const dsName = $("test-dataset-select").value;
   if (!dsName) return;
-  RESULTS = { kind: "browse", dsName, params: testDatasetParams(), split: $("test-split").value };
+  RESULTS = { kind: "browse", dsName, params: testDatasetParams(),
+              split: $("test-split").value, isDim: isStrokeDs(dsName) };
+  setFilterOptions(RESULTS.isDim);
   PAGE = { offset: 0, limit: 60, total: 0 };
   $("panel-results").hidden = false;
   $("results-title").textContent = `Muestras de ${dsName} (${RESULTS.split})`;
@@ -536,7 +536,9 @@ async function openEvaluation(evalId) {
     params: info.config.dataset.params || {},
     split: info.config.split,
     experiment: info.config.experiment,
+    isDim: isStrokeDs(info.config.dataset.name),
   };
+  setFilterOptions(RESULTS.isDim);
   PAGE = { offset: 0, limit: 60, total: 0 };
   $("panel-results").hidden = false;
   $("results-title").textContent = `Resultados de ${evalId}`;
@@ -594,6 +596,9 @@ function renderSummary(summary, totalFiltered) {
   if (!summary) { $("results-summary").textContent = "Evaluación en curso…"; return; }
   $("results-summary").textContent =
     `n=${summary.n} · acc=${summary.acc} · fallos=${summary.errors}` +
+    (summary.angle_mae_deg !== undefined ? ` · error ángulo ${summary.angle_mae_deg}°` : "") +
+    (summary.descriptor_mae ? ` · MAE[rectitud ${summary.descriptor_mae.straightness}, ` +
+      `continuidad ${summary.descriptor_mae.continuity}]` : "") +
     (summary.per_step_acc ? ` · acc por paso: [${summary.per_step_acc.join(", ")}]` : "") +
     ` · filtro actual: ${totalFiltered} muestras`;
 }
@@ -610,7 +615,8 @@ function renderGrid(items) {
     div.className = "cell" + (it.correct === undefined ? "" : it.correct ? " ok" : " fail");
     div.innerHTML = `
       <img src="data:image/png;base64,${it.png}" alt="muestra ${it.index}">
-      <span class="tag">#${it.index} · ${fmtLabel(it.label)}${it.pred !== undefined ? "→" + fmtLabel(it.pred) : ""}</span>`;
+      <span class="tag">#${it.index} · ${labelFor(it.label, RESULTS?.isDim)}${
+        it.pred !== undefined ? "→" + labelFor(it.pred, RESULTS?.isDim) : ""}</span>`;
     div.addEventListener("click", () => {
       grid.querySelectorAll(".cell.selected").forEach((c) => c.classList.remove("selected"));
       div.classList.add("selected");
@@ -674,11 +680,14 @@ async function openSample(index) {
 
 function showSample() {
   const r = SAMPLE;
+  const isDim = r.nn === "dimensionador";
   $("sample-title").textContent =
     `#${r.index} — ${r.nn} ${r.experiment}`;
   const ok = r.pred === r.label;
+  const lf = (v) => labelFor(v, isDim);
   $("sample-verdict").innerHTML =
-    `Etiqueta <b>${fmtLabel(r.label)}</b> · predicción <b>${fmtLabel(r.pred)}</b> ` +
+    `Etiqueta <b>${lf(r.label)}</b> · predicción <b>${lf(r.pred)}</b> ` +
+    (isDim ? `· ángulo ${r.angle_deg}° ` : "") +
     `(conf ${r.conf}, margen ${r.margin}) — ` +
     (ok ? `<span class="verdict-ok">acierto</span>` : `<span class="verdict-fail">fallo</span>`) +
     (r.margin < 0.2 ? ` · <b>ambigua</b>` : "");
@@ -702,6 +711,11 @@ function renderSampleStep() {
   const scale = canvas.width / r.image_size;
   ctx.drawImage(r.imgEl, 0, 0, canvas.width, canvas.height);
 
+  if (r.nn === "dimensionador") {
+    renderDescriptors(r);
+    return;
+  }
+
   let probs = r.probs, stepPred = r.pred;
   if (r.trace) {
     const t = r.trace, s = t.steps[animIdx];
@@ -717,6 +731,29 @@ function renderSampleStep() {
       (t.stride ? ` · stride ${t.stride}` : "") + ` · salida: ${fmtLabel(stepPred)}`;
   }
   renderProbBars(probs, r.label, r.pred);
+}
+
+// Barras de los descriptores del dimensionador: valor predicho y (si hay) el
+// objetivo real, para comparar de un vistazo. sigmoid → [0,1]; tanh → [-1,1].
+function renderDescriptors(r) {
+  const box = $("probs-bars");
+  box.innerHTML = "";
+  const pred = r.descriptors || {};
+  const target = r.target_descriptors || null;
+  DESC_NAMES.forEach((name) => {
+    const p = pred[name];
+    if (p === undefined) return;
+    const isSigned = name.startsWith("angle");     // tanh: [-1, 1]
+    const toPct = (v) => (isSigned ? (v + 1) / 2 : v) * 100;
+    const t = target ? target[name] : undefined;
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <span class="digit" style="width:5.5em;text-align:right">${name}</span>
+      <div class="bar-bg"><div class="bar" style="width:${toPct(p).toFixed(1)}%"></div></div>
+      <span class="val">${p.toFixed(3)}${t !== undefined ? ` <span class="hint">(real ${t.toFixed(3)})</span>` : ""}</span>`;
+    box.appendChild(row);
+  });
 }
 
 function renderProbBars(probs, label, finalPred) {
@@ -857,7 +894,10 @@ async function refreshSlide() {
     const perAxis = r.axis_coords.length;
     const strokeInfo = r.stroke_width > 0
       ? `<br>trazo uniformizado a ~${r.stroke_width} px (stroke_width)` : "";
-    info.innerHTML = r.follows_content
+    info.innerHTML = r.single_window
+      ? `<b>ventana ${r.window_size}×${r.window_size}</b> — la muestra es la ventana ` +
+        `misma (el dimensionador la describe)` + (r.note ? `<br><br>${r.note}` : "")
+      : r.follows_content
       ? `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
         `${r.window_size}×${r.window_size}, num_steps ${r.num_steps}` +
         `<br>recorrido derivado del trazo de la muestra` + strokeInfo +
@@ -1007,9 +1047,16 @@ async function refreshDatasetsTab() {
 // ============================================================
 
 function fillDigitSelects() {
-  const opts = `<option value="">todas</option>` +
-    [...Array(10).keys()].map((d) => `<option value="${d}">${d}</option>`).join("") +
-    `<option value="${EMPTY_LABEL}">∅ (nada)</option>`;
+  setFilterOptions(false);
+}
+
+// Opciones de los filtros por etiqueta/predicción: dígitos (secuenciador) o
+// categorías de trazo (dimensionador de descriptores).
+function setFilterOptions(isDim) {
+  const opts = `<option value="">todas</option>` + (isDim
+    ? CATEGORIES.map((c, i) => `<option value="${i}">${c}</option>`).join("")
+    : [...Array(10).keys()].map((d) => `<option value="${d}">${d}</option>`).join("") +
+      `<option value="${EMPTY_LABEL}">∅ (nada)</option>`);
   $("filter-label").innerHTML = opts;
   $("filter-pred").innerHTML = opts;
 }

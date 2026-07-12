@@ -123,9 +123,24 @@ def api_dataset_slide(name: str, window_size: int | None = None,
     (split, index), con el trazo uniformizado si stroke_width > 0."""
     info = _400(data_registry.dataset_info, name)
     eff = _400(data_registry.effective_params, name, {})
-    # Los datasets de ventanas solo deslizan con sampling='raster'; con
-    # sampling='random' su stride es inerte (ventanas aleatorias).
-    uses_stride = "stride" in eff and eff.get("sampling") != "random"
+    uses_stride = "stride" in eff
+
+    # Datasets de ventanas sueltas (synthetic_strokes): cada muestra ES una ventana
+    # (el dimensionador la describe); no hay recorrido deslizante que animar.
+    if "num_steps" not in eff and "stride" not in eff:
+        ws = int(eff.get("window_size", IMAGE_SIZE))
+        return {
+            "name": name, "image_size": ws, "window_size": ws,
+            "stride": None, "num_steps": None, "dataset_uses_stride": False,
+            "follows_content": False, "single_window": True,
+            "effective_defaults": eff,
+            "full_image": True, "steps": 1, "axis_coords": [],
+            "positions": [[0, 0]],
+            "note": "Este dataset produce ventanas sueltas (el dimensionador las "
+                    "describe una a una): la muestra ES la ventana, no hay recorrido "
+                    "deslizante. El recorrido sobre la imagen lo hace el secuenciador.",
+        }
+
     ws = int(window_size) if window_size is not None else int(eff.get("window_size", IMAGE_SIZE))
     if not 1 <= ws <= IMAGE_SIZE:
         raise HTTPException(400, f"window_size debe estar entre 1 y {IMAGE_SIZE}; "
@@ -165,11 +180,6 @@ def api_dataset_slide(name: str, window_size: int | None = None,
     positions = grid_positions(IMAGE_SIZE, ws, st) if ws < IMAGE_SIZE else [(0, 0)]
     axis = sorted({p[0] for p in positions})
     notes = []
-    if not uses_stride:
-        notes.append("Este dataset está en sampling='random': muestrea ventanas "
-                     "aleatorias por imagen (windows_per_image) y su stride no se "
-                     "usa. El recorrido mostrado es la grilla raster que usaría "
-                     "con sampling='raster' (y el trace del dimensionador en Probar).")
     if ws >= IMAGE_SIZE:
         notes.append("La ventana cubre toda la imagen: el recorrido colapsa a 1 paso.")
     elif st > ws:

@@ -24,10 +24,9 @@ def _assert_completed(registry, exp_id, backups_root):
 
 
 @pytest.mark.parametrize("dataset,params", [
-    ("mnist_full", {}),  # imagen completa (defaults)
-    ("mnist_full", {"window_size": 5, "windows_per_image": 2}),  # adaptado a ventanas
-    ("mnist_windows", {"window_size": 14, "windows_per_image": 2}),
-    ("mnist_windows", {"window_size": 14, "sampling": "raster", "stride": 7}),  # grilla raster
+    ("synthetic_strokes", {}),                                   # defaults (ventana 5)
+    ("synthetic_strokes", {"window_size": 7}),                   # otra ventana
+    ("synthetic_strokes", {"curved_fraction": 1.0, "broken_fraction": 0.0}),  # solo curvas continuas
 ])
 def test_train_dimensionador(tmp_registry, tiny_datasets, tmp_path, dataset, params):
     cfg = dim_config(dataset, params)
@@ -38,7 +37,7 @@ def test_train_dimensionador(tmp_registry, tiny_datasets, tmp_path, dataset, par
 
 def test_train_secuenciador_end_to_end(tmp_registry, tiny_datasets, tmp_path):
     # 1. dimensionador previo
-    cfg_dim = dim_config("mnist_windows", {"window_size": 14, "windows_per_image": 2})
+    cfg_dim = dim_config("synthetic_strokes", {"window_size": 14})
     dim_id = tmp_registry.create_experiment("dimensionador", cfg_dim)
     train_dim(dim_id, cfg_dim, tmp_registry)
 
@@ -56,7 +55,7 @@ def test_train_secuenciador_end_to_end(tmp_registry, tiny_datasets, tmp_path):
 
 def test_train_secuenciador_contour_end_to_end(tmp_registry, tiny_datasets, tmp_path):
     """El secuenciador entrena igual con la trayectoria que sigue el trazo."""
-    cfg_dim = dim_config("mnist_windows", {"window_size": 14, "windows_per_image": 2})
+    cfg_dim = dim_config("synthetic_strokes", {"window_size": 14})
     dim_id = tmp_registry.create_experiment("dimensionador", cfg_dim)
     train_dim(dim_id, cfg_dim, tmp_registry)
 
@@ -92,7 +91,7 @@ def test_secuenciador_requires_dimensionador(tmp_registry, tmp_eval_registry, ti
 
 def test_secuenciador_rejects_full_image_dimensionador(tmp_registry, tmp_eval_registry):
     """Un dimensionador de ventana 28 colapsaría la secuencia a 1 paso → 400 antes de crear."""
-    dim_id = tmp_registry.create_experiment("dimensionador", dim_config("mnist_full", {}))
+    dim_id = tmp_registry.create_experiment("dimensionador", dim_config("synthetic_strokes", {"window_size": 28}))
     ckpt = tmp_registry.checkpoints_dir(dim_id) / "best.pt"
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     ckpt.touch()  # la validación solo comprueba existencia, no carga pesos
@@ -108,7 +107,7 @@ def test_secuenciador_config_records_effective_window(tmp_registry):
     from swnist.validation import validate_train_config
 
     dim_id = tmp_registry.create_experiment(
-        "dimensionador", dim_config("mnist_windows", {"window_size": 14}))
+        "dimensionador", dim_config("synthetic_strokes", {"window_size": 14}))
     ckpt = tmp_registry.checkpoints_dir(dim_id) / "best.pt"
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     ckpt.touch()
@@ -134,7 +133,7 @@ def test_secuenciador_config_records_effective_stride(tmp_registry):
     from swnist.validation import validate_train_config
 
     dim_id = _fake_trained(tmp_registry, "dimensionador",
-                           dim_config("mnist_windows", {"window_size": 14}))
+                           dim_config("synthetic_strokes", {"window_size": 14}))
     cfg = seq_config(dim_id)
     del cfg["dataset"]["params"]["stride"]
     final = validate_train_config("secuenciador", cfg, tmp_registry)
@@ -147,7 +146,7 @@ def test_eval_secuenciador_pins_training_stride(tmp_registry):
     from swnist.validation import validate_eval_config
 
     dim_id = _fake_trained(tmp_registry, "dimensionador",
-                           dim_config("mnist_windows", {"window_size": 14}))
+                           dim_config("synthetic_strokes", {"window_size": 14}))
     seq_id = _fake_trained(tmp_registry, "secuenciador", seq_config(dim_id))  # stride 7
 
     with pytest.raises(ValueError, match="stride=7"):
@@ -167,7 +166,7 @@ def test_secuenciador_config_records_effective_num_steps(tmp_registry):
     from swnist.validation import validate_train_config
 
     dim_id = _fake_trained(tmp_registry, "dimensionador",
-                           dim_config("mnist_windows", {"window_size": 14}))
+                           dim_config("synthetic_strokes", {"window_size": 14}))
     cfg = seq_config(dim_id)
     cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {}}
     final = validate_train_config("secuenciador", cfg, tmp_registry)
@@ -179,7 +178,7 @@ def test_eval_secuenciador_pins_training_num_steps(tmp_registry):
     from swnist.validation import validate_eval_config
 
     dim_id = _fake_trained(tmp_registry, "dimensionador",
-                           dim_config("mnist_windows", {"window_size": 14}))
+                           dim_config("synthetic_strokes", {"window_size": 14}))
     cfg = seq_config(dim_id)
     cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {"num_steps": 8}}
     seq_id = _fake_trained(tmp_registry, "secuenciador", cfg)
@@ -201,7 +200,7 @@ def test_eval_secuenciador_rejects_other_trajectory_type(tmp_registry):
     from swnist.validation import validate_eval_config
 
     dim_id = _fake_trained(tmp_registry, "dimensionador",
-                           dim_config("mnist_windows", {"window_size": 14}))
+                           dim_config("synthetic_strokes", {"window_size": 14}))
     raster_id = _fake_trained(tmp_registry, "secuenciador", seq_config(dim_id))  # stride 7
 
     with pytest.raises(ValueError, match="otro tipo de recorrido"):

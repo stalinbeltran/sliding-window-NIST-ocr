@@ -9,6 +9,7 @@ entrenamiento crea un experimento nuevo).
 import base64
 import io
 import json
+import math
 
 import torch
 import torch.nn.functional as F
@@ -17,6 +18,8 @@ from PIL import Image
 from swnist.data.datasets import IMAGE_SIZE
 from swnist.data.registry import build_dataset, dataset_info
 from swnist.data.windows import extract_window, grid_positions
+from swnist.descriptors import (CATEGORIES, IDX, NAMES, activate,
+                                boundary_margin, category_index, decode_angle)
 from swnist.evaluation.runner import load_model
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.training.common import get_device
@@ -110,25 +113,12 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
     }
 
     if nn_name == "dimensionador":
-        item, _ = ds[index]
-        probs = F.softmax(model(item.unsqueeze(0).to(device)), dim=-1)[0]
-        out.update(_pred_fields(probs))
-        ws = int(model.config["window_size"])
-        if info["full_image"] and ws < IMAGE_SIZE:
-            positions = grid_positions(IMAGE_SIZE, ws, stride)
-            steps = []
-            for top, left in positions:
-                w = extract_window(display_img, top, left, ws)
-                p = F.softmax(model(w.unsqueeze(0).to(device)), dim=-1)[0]
-                steps.append(_step_fields(p))
-            out["trace"] = {"window_size": ws, "stride": stride, "positions": positions,
-                            "steps": steps, "kind": "dimensionador"}
-        else:
-            out["trace_reason"] = (
-                "La muestra ya es una ventana única: no hay deslizamiento que "
-                "animar. Usa un dataset de imagen completa (p. ej. mnist_full) "
-                "para ver el recorrido." if not info["full_image"] else
-                "La ventana del modelo cubre toda la imagen: no hay deslizamiento.")
+        item, target = ds[index]
+        pred = activate(model(item.unsqueeze(0).to(device)))[0].cpu()
+        out.update(_desc_fields(pred, target))
+        out["trace_reason"] = (
+            "El dimensionador describe una ventana única (el trazo que ve): no "
+            "hay deslizamiento que animar. El recorrido lo hace el secuenciador.")
     else:
         windows, positions_norm, _ = ds[index]
         _, dim_model, _ = get_model(exp_registry, exp_cfg["dimensionador_experiment"])
@@ -148,6 +138,27 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
             "steps": [_step_fields(p) for p in probs_seq],
             "kind": "secuenciador",
         }
+    return out
+
+
+def _desc_fields(pred: torch.Tensor, target: torch.Tensor | None = None) -> dict:
+    """Campos de un dimensionador de descriptores: valores predichos + categoría."""
+    pcat = category_index(pred)
+    out = {
+        "kind": "descriptors",
+        "descriptors": {NAMES[k]: round(float(pred[k]), 4) for k in range(len(NAMES))},
+        "pred": pcat,
+        "category": CATEGORIES[pcat],
+        "angle_deg": round(math.degrees(decode_angle(pred[IDX["angle_sin2"]],
+                                                     pred[IDX["angle_cos2"]])), 1),
+        "conf": round(1.0 - boundary_margin(pred) / 2.0, 4),
+        "margin": round(boundary_margin(pred), 4),
+    }
+    if target is not None:
+        tcat = category_index(target)
+        out["target_descriptors"] = {NAMES[k]: round(float(target[k]), 4)
+                                     for k in range(len(NAMES))}
+        out["target_category"] = CATEGORIES[tcat]
     return out
 
 

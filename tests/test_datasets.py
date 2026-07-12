@@ -3,14 +3,15 @@
 import pytest
 import torch
 
-from swnist.data.datasets import (EMPTY_INK_THRESHOLD, EMPTY_LABEL, IMAGE_SIZE,
-                                  MnistContourSequences, MnistFull,
-                                  MnistSlidingSequences, MnistWindows)
+from swnist.data.datasets import (IMAGE_SIZE, MnistContourSequences,
+                                  MnistSlidingSequences)
 from swnist.data.registry import (build_dataset, effective_window_size,
                                   list_datasets, validate_dataset_params)
+from swnist.data.synthstrokes import STROKE_DEFAULTS, SyntheticStrokes
 from swnist.data.trajectory import (contour_positions, ink_mask, order_path,
                                     resample_path, skeletonize)
 from swnist.data.windows import extract_window, grid_positions, normalize_position
+from swnist.descriptors import IDX, NUM_DESCRIPTORS, category_index
 
 
 def test_grid_positions_covers_borders():
@@ -37,202 +38,94 @@ def test_normalize_position_range():
     assert (x, y) == (1.0, 1.0)
 
 
-def test_mnist_full_item():
-    ds = MnistFull(train=True)
-    img, label = ds[0]
-    assert img.shape == (1, 28, 28)
-    assert 0 <= label <= 9
+# ---------- dataset sintético de trazos (dimensionador) ----------
+
+def test_synthetic_strokes_item_shape_and_target():
+    ds = SyntheticStrokes(train=True, seed=1, num_samples=50, window_size=5)
+    assert len(ds) == 50
+    w, target = ds[0]
+    assert w.shape == (1, 5, 5) and w.dtype == torch.float32
+    assert target.shape == (NUM_DESCRIPTORS,) and target.dtype == torch.float32
+    # Rangos naturales por canal: sigmoid ∈ [0,1], tanh ∈ [-1,1].
+    for name in ("straightness", "horizontal", "vertical", "continuity"):
+        assert 0.0 <= float(target[IDX[name]]) <= 1.0
+    for name in ("angle_sin2", "angle_cos2"):
+        assert -1.0 <= float(target[IDX[name]]) <= 1.0
 
 
-def test_mnist_full_windowed():
-    # mnist_full adaptado a otro tamaño de ventana: muestras = ventanas aleatorias,
-    # pero la muestra visible sigue siendo la imagen completa.
-    ds = MnistFull(train=True, seed=7, window_size=5, windows_per_image=3)
-    assert len(ds) == 3 * len(ds.base)
-    w, label = ds[10]
-    assert w.shape == (1, 5, 5)
-    full, label2 = ds.display_item(10)
-    assert full.shape == (1, 28, 28) and label == label2
-    # Determinista dado (seed, idx); misma lógica de ventanas que MnistWindows
-    ds2 = MnistWindows(train=True, seed=7, window_size=5, windows_per_image=3)
-    assert torch.equal(w, ds2[10][0])
+def test_synthetic_strokes_never_empty():
+    """Nunca se genera una ventana completamente vacía (regla del usuario)."""
+    ds = SyntheticStrokes(train=True, seed=2, num_samples=300, window_size=5,
+                          length_min=STROKE_DEFAULTS["length_min"])
+    for i in range(300):
+        w, _ = ds[i]
+        assert float(w.abs().max()) > 1e-6  # hay al menos un píxel con tinta
 
 
-def test_mnist_windows_item_and_determinism():
-    ds1 = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
-    ds2 = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
-    w1, l1 = ds1[10]
-    w2, l2 = ds2[10]
-    assert w1.shape == (1, 14, 14)
-    assert torch.equal(w1, w2) and l1 == l2  # reproducible dado (seed, idx)
-    ds3 = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=8)
-    w3, _ = ds3[10]
-    assert not torch.equal(w1, w3)  # otra semilla, otra ventana
+def test_synthetic_strokes_deterministic_and_split_disjoint():
+    a = SyntheticStrokes(train=True, seed=5, num_samples=20)
+    b = SyntheticStrokes(train=True, seed=5, num_samples=20)
+    wa, ta = a[7]
+    wb, tb = b[7]
+    assert torch.equal(wa, wb) and torch.equal(ta, tb)  # determinista dado (seed, idx)
+    # otra semilla → otra muestra
+    c = SyntheticStrokes(train=True, seed=6, num_samples=20)
+    assert not torch.equal(a[7][0], c[7][0])
+    # train y test son disjuntos (misma seed, distinto split)
+    test = SyntheticStrokes(train=False, seed=5, num_samples=20)
+    assert not torch.equal(a[7][0], test[7][0])
 
 
-def test_raster_sampling_windows():
-    """sampling='raster': cada imagen produce la grilla completa window_size+stride
-    en orden raster (windows_per_image se ignora), sin RNG."""
-    ds = MnistWindows(train=True, window_size=14, stride=7, sampling="raster", seed=7)
-    pos = grid_positions(IMAGE_SIZE, 14, 7)
-    assert len(ds) == len(pos) * len(ds.base)
-    image, label = ds.base[0]
-    for i, (top, left) in enumerate(pos):
-        w, l = ds[i]
-        assert l == label
-        assert torch.equal(w, extract_window(image, top, left, 14))
-    # la segunda imagen empieza donde termina la grilla de la primera
-    image2, label2 = ds.base[1]
-    w, l = ds[len(pos)]
-    assert l == label2 and torch.equal(w, extract_window(image2, 0, 0, 14))
-    # windows_per_image se ignora: el número de muestras lo dicta la grilla
-    ds2 = MnistWindows(train=True, window_size=14, stride=7, sampling="raster",
-                       windows_per_image=99, seed=7)
-    assert len(ds2) == len(ds)
-    # otra semilla, mismas ventanas: el recorrido es determinista sin RNG
-    ds3 = MnistWindows(train=True, window_size=14, stride=7, sampling="raster", seed=8)
-    assert torch.equal(ds[3][0], ds3[3][0])
+def test_synthetic_strokes_straight_vs_curved_targets():
+    # Solo rectas → straightness == 1 en todas las muestras.
+    straight = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=0.0)
+    assert all(float(straight[i][1][IDX["straightness"]]) == 1.0 for i in range(40))
+    # Solo curvas → straightness < 1 (hay curvatura).
+    curved = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=1.0)
+    assert all(float(curved[i][1][IDX["straightness"]]) < 1.0 for i in range(40))
 
 
-def test_raster_sampling_display_and_empty_fraction():
-    # display_item sigue siendo la imagen completa correcta, y empty_fraction
-    # funciona igual que con ventanas aleatorias (fracción de ventanas vacías).
-    ds = MnistFull(train=True, window_size=14, stride=14, sampling="raster",
-                   seed=3, empty_fraction=0.5)
-    per_image = len(grid_positions(IMAGE_SIZE, 14, 14))  # coords {0, 14} → 4
-    assert per_image == 4 and len(ds) == 4 * len(ds.base)
-    full, _ = ds.display_item(per_image)  # primera ventana de la segunda imagen
-    assert torch.equal(full, ds.base[1][0])
-    n = 200
-    labels = [ds.display_item(i)[1] for i in range(n)]
-    empties = [i for i in range(n) if labels[i] == EMPTY_LABEL]
-    assert 0.3 < len(empties) / n < 0.7
-    for i in empties[:10]:
-        w, label = ds[i]
-        assert label == EMPTY_LABEL
-        assert ((w * 0.3081 + 0.1307) <= EMPTY_INK_THRESHOLD + 1e-6).all()
+def test_synthetic_strokes_display_item_category():
+    ds = SyntheticStrokes(train=True, seed=1, num_samples=10)
+    w, cat = ds.display_item(0)
+    assert w.shape == (1, ds.window_size, ds.window_size)
+    assert cat == category_index(ds[0][1]) and 0 <= cat <= 3
 
 
-def test_random_sampling_default_unchanged():
-    # sampling='random' (default) reproduce las muestras de configs antiguas;
-    # el stride es inerte en ese modo.
-    old = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
-    new = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7,
-                       sampling="random", stride=3)
-    assert len(old) == len(new)
-    for i in (0, 10, 99):
-        assert torch.equal(old[i][0], new[i][0]) and old[i][1] == new[i][1]
+def test_synthetic_strokes_via_build_dataset():
+    ds = build_dataset("synthetic_strokes", {"num_samples": 30, "window_size": 7},
+                       train=True, seed=0)
+    w, t = ds[0]
+    assert w.shape == (1, 7, 7) and t.shape == (NUM_DESCRIPTORS,)
 
 
-def test_sampling_param_validation():
-    with pytest.raises(ValueError, match="sampling debe ser"):
-        build_dataset("mnist_windows", {"sampling": "zigzag"}, train=True, seed=0)
-    with pytest.raises(ValueError, match="stride debe ser"):
-        build_dataset("mnist_full", {"sampling": "raster", "stride": 0},
-                      train=True, seed=0)
-    # los datasets de secuencias no aceptan sampling (tienen su propio recorrido)
+def test_synthetic_strokes_param_validation():
     with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_sliding_sequences", {"sampling": "raster"},
+        build_dataset("synthetic_strokes", {"stride": 3}, train=True, seed=0)
+    with pytest.raises(ValueError, match="Rango inválido"):
+        build_dataset("synthetic_strokes", {"angle_min_deg": 100.0, "angle_max_deg": 10.0},
                       train=True, seed=0)
-    ds = build_dataset("mnist_windows", {"sampling": "raster", "window_size": 14,
-                                         "stride": 7}, train=True, seed=0)
-    assert len(ds) == 9 * len(ds.base)
+    with pytest.raises(ValueError, match="curved_fraction"):
+        build_dataset("synthetic_strokes", {"curved_fraction": 1.5}, train=True, seed=0)
+    with pytest.raises(ValueError, match="num_samples"):
+        build_dataset("synthetic_strokes", {"num_samples": 0}, train=True, seed=0)
+    # rangos válidos (incluye stroke_width como float)
+    validate_dataset_params("synthetic_strokes", {"stroke_width": 1.5, "curvature_max": 0.8})
 
 
-def test_custom_dataset_rejects_sampling_and_raster_grid_changes(tmp_custom_store):
-    """El muestreo (y, en raster, la grilla) definen a qué ventana apunta cada
-    índice guardado: cambiarlos en un custom se rechaza con razón."""
+def test_custom_dataset_of_strokes_rejects_param_change(tmp_custom_store):
+    """Todo param de generación define la muestra: cambiarlo en un custom se rechaza."""
     tmp_custom_store.create(
-        {"name": "mnist_windows",
-         "params": {"window_size": 14, "sampling": "raster", "stride": 7},
+        {"name": "synthetic_strokes",
+         "params": {"num_samples": 100, "window_size": 5},
          "split": "test", "seed": 42},
-        [0, 1, 2], "sub_raster")
-    validate_dataset_params("sub_raster", {"sampling": "raster", "stride": 7})  # igual: ok
-    with pytest.raises(ValueError, match="sampling"):
-        validate_dataset_params("sub_raster", {"sampling": "random"})
-    with pytest.raises(ValueError, match="stride"):
-        validate_dataset_params("sub_raster", {"stride": 5})
-    with pytest.raises(ValueError, match="window_size"):
-        validate_dataset_params("sub_raster", {"window_size": 10})
-    # con muestreo aleatorio la ventana sí se puede cambiar (regla 19), pero
-    # pasar a raster remaparía los índices → rechazado
-    tmp_custom_store.create(
-        {"name": "mnist_windows", "params": {"window_size": 14}, "split": "test",
-         "seed": 42},
-        [0, 1], "sub_random")
-    validate_dataset_params("sub_random", {"window_size": 10})
-    with pytest.raises(ValueError, match="sampling"):
-        validate_dataset_params("sub_random", {"sampling": "raster"})
+        [0, 1, 2], "sub_strokes")
+    validate_dataset_params("sub_strokes", {"window_size": 5})  # igual: ok
+    with pytest.raises(ValueError, match="No se puede cambiar"):
+        validate_dataset_params("sub_strokes", {"curved_fraction": 0.9})
 
 
-def test_empty_fraction_generates_empty_windows():
-    """empty_fraction > 0: esa fracción son ventanas SIN píxeles activos con la
-    clase 'no hay nada' (EMPTY_LABEL), deterministas dado (seed, idx)."""
-    ds = MnistWindows(train=True, window_size=14, windows_per_image=2, seed=7,
-                      empty_fraction=0.5)
-    n = 200
-    labels = [ds.display_item(i)[1] for i in range(n)]
-    empties = [i for i in range(n) if labels[i] == EMPTY_LABEL]
-    assert 0.3 < len(empties) / n < 0.7  # ~la fracción pedida
-    for i in empties[:20]:
-        w, label = ds[i]
-        assert label == EMPTY_LABEL and w.shape == (1, 14, 14)
-        raw = w * 0.3081 + 0.1307  # de-normalizar al gris original
-        assert (raw <= EMPTY_INK_THRESHOLD + 1e-6).all()  # sin píxeles activos
-    # las demás muestras conservan su dígito
-    digit_idx = next(i for i in range(n) if labels[i] != EMPTY_LABEL)
-    assert 0 <= ds[digit_idx][1] <= 9
-    # determinista: mismas ventanas y etiquetas en otra instancia
-    ds2 = MnistWindows(train=True, window_size=14, windows_per_image=2, seed=7,
-                       empty_fraction=0.5)
-    for i in (empties[0], digit_idx):
-        w1, l1 = ds[i]
-        w2, l2 = ds2[i]
-        assert torch.equal(w1, w2) and l1 == l2
-
-
-def test_empty_fraction_zero_keeps_old_samples():
-    """empty_fraction=0 (default) reproduce exactamente las muestras de las
-    configs previas a la clase 'no hay nada' (no consume RNG extra)."""
-    old = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
-    new = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7,
-                       empty_fraction=0.0)
-    for i in (0, 10, 99):
-        assert torch.equal(old[i][0], new[i][0]) and old[i][1] == new[i][1]
-
-
-def test_empty_fraction_full_window_is_blank():
-    # Con ventana 28 no hay región que muestrear: la muestra vacía es fondo puro.
-    ds = MnistFull(train=True, seed=3, empty_fraction=0.9)
-    i = next(i for i in range(20) if ds.display_item(i)[1] == EMPTY_LABEL)
-    w, label = ds[i]
-    assert label == EMPTY_LABEL and w.shape == (1, 28, 28)
-    assert ((w * 0.3081 + 0.1307).abs() <= EMPTY_INK_THRESHOLD).all()
-
-
-def test_empty_fraction_param_validation():
-    with pytest.raises(ValueError, match="empty_fraction debe ser"):
-        build_dataset("mnist_windows", {"empty_fraction": 1.0}, train=True, seed=0)
-    with pytest.raises(ValueError, match="empty_fraction debe ser"):
-        build_dataset("mnist_full", {"empty_fraction": -0.1}, train=True, seed=0)
-    with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_sliding_sequences", {"empty_fraction": 0.3},
-                      train=True, seed=0)
-    validate_dataset_params("mnist_windows", {"empty_fraction": 0.3})  # válido
-
-
-def test_custom_dataset_rejects_empty_fraction_change(tmp_custom_store):
-    """Cambiar empty_fraction en un custom re-etiquetaría sus muestras → 400."""
-    tmp_custom_store.create(
-        {"name": "mnist_windows",
-         "params": {"window_size": 14, "empty_fraction": 0.3},
-         "split": "test", "seed": 42},
-        [0, 1, 2], "con_vacios")
-    validate_dataset_params("con_vacios", {"empty_fraction": 0.3})  # igual al base: ok
-    validate_dataset_params("con_vacios", {"window_size": 10})      # ventana sí se puede
-    with pytest.raises(ValueError, match="empty_fraction"):
-        validate_dataset_params("con_vacios", {"empty_fraction": 0.5})
-
+# ---------- secuencias (secuenciador) ----------
 
 def test_mnist_sliding_sequences_item():
     ds = MnistSlidingSequences(train=True, window_size=14, stride=7)
@@ -319,8 +212,11 @@ def test_mnist_contour_sequences_deterministic_and_per_sample():
     assert hits == len(ds1.trajectory(0))
 
 
+# ---------- catálogo ----------
+
 def test_list_datasets_filters_by_nn():
-    # Solo los builtin: la lista real puede incluir datasets custom del usuario.
+    dim = [d["name"] for d in list_datasets("dimensionador") if not d["custom"]]
+    assert dim == ["synthetic_strokes"]
     for d in list_datasets("dimensionador"):
         assert "dimensionador" in d["compatible_with"]
     seq = [d["name"] for d in list_datasets("secuenciador") if not d["custom"]]
@@ -333,18 +229,14 @@ def test_build_dataset_unknown_name():
 
 
 def test_build_dataset_rejects_params_of_other_dataset():
-    # mnist_full acepta params de ventana, pero no los de otros datasets (p. ej. num_steps)
+    # synthetic_strokes no acepta parámetros de secuencias (p. ej. num_steps)
     with pytest.raises(ValueError, match="Parámetros no válidos"):
-        build_dataset("mnist_full", {"num_steps": 8}, train=True, seed=42)
+        build_dataset("synthetic_strokes", {"num_steps": 8}, train=True, seed=42)
 
 
 def test_build_dataset_rejects_invalid_param_values():
     with pytest.raises(ValueError, match="window_size debe ser"):
-        build_dataset("mnist_full", {"window_size": 0}, train=True, seed=42)
-    with pytest.raises(ValueError, match="window_size debe ser"):
-        build_dataset("mnist_windows", {"window_size": 29}, train=True, seed=42)
-    with pytest.raises(ValueError, match="windows_per_image debe ser"):
-        build_dataset("mnist_full", {"windows_per_image": 0}, train=True, seed=42)
+        build_dataset("mnist_sliding_sequences", {"window_size": 0}, train=True, seed=42)
     with pytest.raises(ValueError, match="num_steps debe ser"):
         build_dataset("mnist_contour_sequences", {"num_steps": 1}, train=True, seed=42)
     # cada dataset de secuencias acepta solo su propio parámetro de trayectoria
@@ -354,20 +246,7 @@ def test_build_dataset_rejects_invalid_param_values():
         build_dataset("mnist_sliding_sequences", {"num_steps": 8}, train=True, seed=42)
 
 
-def test_build_dataset_valid_params():
-    ds = build_dataset("mnist_windows", {"window_size": 10}, train=True, seed=0)
-    w, _ = ds[0]
-    assert w.shape == (1, 10, 10)
-    assert isinstance(build_dataset("mnist_full", {}, train=True, seed=0)[0][0], torch.Tensor)
-    # Cualquier dataset se adapta al tamaño de ventana pedido
-    ds_full = build_dataset("mnist_full", {"window_size": 5, "windows_per_image": 100},
-                            train=True, seed=0)
-    assert ds_full[0][0].shape == (1, 5, 5)
-    assert len(ds_full) == 100 * len(ds_full.base)
-
-
 def test_effective_window_size_follows_params():
-    assert effective_window_size("mnist_full", {}) == 28
-    assert effective_window_size("mnist_full", {"window_size": 5}) == 5
-    assert effective_window_size("mnist_windows", {}) == 14
+    assert effective_window_size("synthetic_strokes", {}) == 5
+    assert effective_window_size("synthetic_strokes", {"window_size": 7}) == 7
     assert effective_window_size("mnist_sliding_sequences", {"window_size": 7}) == 7

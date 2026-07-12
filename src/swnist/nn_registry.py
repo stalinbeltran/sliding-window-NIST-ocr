@@ -1,16 +1,17 @@
 """Catálogo de NNs entrenables, con configuración por defecto para la web app."""
 
+from swnist.data.synthstrokes import STROKE_DEFAULTS
+
 NNS = {
     "dimensionador": {
-        "description": "CNN que extrae características de una ventana de la imagen. "
-                       "Se pre-entrena clasificando el dígito de origen de la ventana; "
-                       "con dataset.params.empty_fraction > 0 aprende además la clase "
-                       "'no hay nada en este recuadro' (10).",
+        "description": "CNN que describe el trazo de una ventana con descriptores "
+                       "geométricos interpretables (rectitud, horizontal, vertical, "
+                       "ángulo, continuidad). Se entrena sobre el dataset sintético "
+                       "de rectas/curvas (synthetic_strokes); esos descriptores son "
+                       "lo que consume el secuenciador.",
         "defaults": {
-            "dataset": {"name": "mnist_full",
-                        "params": {"window_size": 28, "windows_per_image": 1,
-                                   "empty_fraction": 0.0}},
-            "model": {"window_size": 28, "feature_dim": 32, "num_classes": 10, "channels": [16, 32]},
+            "dataset": {"name": "synthetic_strokes", "params": dict(STROKE_DEFAULTS)},
+            "model": {"window_size": 5, "hidden_dim": 32, "channels": [16, 32]},
             "training": {
                 "epochs": 5, "batch_size": 128, "lr": 0.001, "weight_decay": 0.0,
                 "seed": 42, "val_fraction": 0.1, "log_every": 50,

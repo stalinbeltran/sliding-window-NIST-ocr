@@ -3,20 +3,27 @@
 import pytest
 import torch
 
+from swnist.descriptors import NUM_DESCRIPTORS, activate
 from swnist.models import Dimensionador, Secuenciador
 
 
 def test_dimensionador_shapes():
-    m = Dimensionador(window_size=14, feature_dim=16, channels=(8, 16))
-    x = torch.randn(4, 1, 14, 14)
-    assert m.features(x).shape == (4, 16)
-    assert m(x).shape == (4, 10)
+    # forward → descriptores crudos (6); features → los mismos activados (lo que
+    # consume el secuenciador). feature_dim queda fijo = nº de descriptores.
+    m = Dimensionador(window_size=5, hidden_dim=16, channels=(8, 16))
+    x = torch.randn(4, 1, 5, 5)
+    assert m(x).shape == (4, NUM_DESCRIPTORS)
+    f = m.features(x)
+    assert f.shape == (4, NUM_DESCRIPTORS)
+    assert m.config["feature_dim"] == NUM_DESCRIPTORS
+    # features == activate(forward): interpretable, en rango natural.
+    assert torch.allclose(f, activate(m(x)))
 
 
 def test_dimensionador_accepts_any_window_size():
     # Pooling adaptativo: la misma red procesa ventanas de otro tamaño
-    m = Dimensionador(window_size=14, feature_dim=16, channels=(8, 16))
-    assert m.features(torch.randn(2, 1, 28, 28)).shape == (2, 16)
+    m = Dimensionador(window_size=5, hidden_dim=16, channels=(8, 16))
+    assert m.features(torch.randn(2, 1, 14, 14)).shape == (2, NUM_DESCRIPTORS)
 
 
 @pytest.mark.parametrize("channels", [(8,), (4, 8, 16), (4, 8, 16, 32, 64)])
@@ -24,10 +31,10 @@ def test_dimensionador_variable_depth(channels):
     # channels acepta cualquier número de bloques conv (≥1); con muchas capas el
     # MaxPool se omite cuando la ventana ya no da más y el pooling adaptativo
     # mantiene la salida estable.
-    m = Dimensionador(window_size=14, feature_dim=16, channels=channels)
-    x = torch.randn(2, 1, 14, 14)
-    assert m.features(x).shape == (2, 16)
-    assert m(x).shape == (2, 10)
+    m = Dimensionador(window_size=5, hidden_dim=16, channels=channels)
+    x = torch.randn(2, 1, 5, 5)
+    assert m.features(x).shape == (2, NUM_DESCRIPTORS)
+    assert m(x).shape == (2, NUM_DESCRIPTORS)
     assert m.config["channels"] == list(channels)
     m2 = Dimensionador.from_config(m.config)
     assert m2.config == m.config
@@ -35,11 +42,11 @@ def test_dimensionador_variable_depth(channels):
 
 def test_dimensionador_rejects_empty_channels():
     with pytest.raises(ValueError):
-        Dimensionador(window_size=14, channels=())
+        Dimensionador(window_size=5, channels=())
 
 
 def test_dimensionador_from_config_roundtrip():
-    m = Dimensionador(window_size=10, feature_dim=8, channels=(4, 8))
+    m = Dimensionador(window_size=10, hidden_dim=8, channels=(4, 8))
     m2 = Dimensionador.from_config(m.config)
     assert m2.config == m.config
 

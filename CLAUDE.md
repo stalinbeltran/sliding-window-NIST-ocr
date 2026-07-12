@@ -147,6 +147,9 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     `empty_fraction` en un dataset custom se rechaza (re-etiquetaría sus muestras).
     El secuenciador no cambia: sigue clasificando 0–9, pero las features del
     dimensionador ahora le comunican que la región observada está vacía.
+    **NOTA (2026-07-12):** regla retirada. El dimensionador dejó de clasificar dígitos
+    y de usar datasets NIST (regla 25): ya no existe la clase "no hay nada" ni
+    `empty_fraction` (mnist_full/mnist_windows eliminados).
 
 23. **Uniformización del grosor de trazo** (2026-07-12): todos los datasets (builtin y
     custom) aceptan `stroke_width` ∈ [0, 28] (`src/swnist/data/strokes.py`): 0 (default)
@@ -183,6 +186,41 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     entrenamiento a las evaluaciones; en `GET /api/datasets/<name>/slide` el
     visualizador muestra la grilla y aclara cuándo el stride del dataset aplica
     (`dataset_uses_stride` = raster) o es inerte (random).
+    **NOTA (2026-07-12):** retirada para el dimensionador junto con los datasets NIST
+    (regla 25). El muestreo raster ya no existe (mnist_full/mnist_windows eliminados);
+    los datasets de secuencias conservan su `stride` como parámetro de trayectoria.
+
+25. **Dimensionador de descriptores geométricos sobre trazos sintéticos** (2026-07-12,
+    branch `feature/dimensionador-descriptores`): el dimensionador dejó de clasificar
+    dígitos y ahora **describe el trazo** de su ventana. Deja de usar datasets NIST:
+    su único dataset es `synthetic_strokes` (`src/swnist/data/synthstrokes.py`), que
+    genera rectas/curvas (continuas/entrecortadas) sobre una ventana cuadrada (default
+    5×5) con un vector de **descriptores geométricos como target**, conocido por
+    construcción. El contrato de los 6 descriptores vive en `src/swnist/descriptors.py`
+    (única fuente de verdad para dataset, modelo, entrenamiento, evaluación y UI):
+    `straightness` (1=recta), `horizontal` (|cos θ|), `vertical` (|sin θ|), `angle_sin2`
+    y `angle_cos2` (el ángulo como par sin/cos de 2θ, sin salto en 0°/180°) y
+    `continuity` (1=continua). `forward` regresa los crudos (pérdida MSE por canal),
+    `features` = `activate(forward)` los entrega en rango natural al secuenciador
+    (`feature_dim` fijo = 6). El **conjunto de muestras se define por rangos
+    JSON-editables** desde la UI (num_samples, curved_fraction, broken_fraction, rangos
+    de ángulo/longitud/curvatura/guiones y stroke_width). **Nunca** se genera una
+    ventana completamente vacía (siempre hay tinta), pero sí trazos cortos. Determinista
+    dado (seed, train, idx); train/test disjuntos. La métrica registrada como `val_acc`
+    es un score combinado ∈ [0,1] (media de 1−error por descriptor, ángulo como
+    distancia angular); en `metrics.jsonl` van además `angle_err_deg`,
+    `straightness_mae`, `continuity_mae`. La evaluación resume por **categoría discreta**
+    (recta/curva × continua/entrecortada, matriz 4×4) para reutilizar filtros/grilla de
+    Probar, y añade `angle_mae_deg` y `descriptor_mae` al summary; el predict del
+    dimensionador devuelve los descriptores (no una distribución de dígitos) y no tiene
+    trace (la muestra ES la ventana). El **secuenciador no cambia**: sigue clasificando
+    0–9 consumiendo las features del dimensionador (ahora interpretables) al recorrer
+    dígitos MNIST reales. Consecuencia: reglas 22 (clase vacío) y 24 (sampling raster)
+    quedan retiradas para el dimensionador, y la parte de la regla 19 sobre ventanas de
+    mnist_full/mnist_windows ya no aplica (esos datasets se eliminaron).
+    **Seguimiento pendiente:** el dimensionador ya no ve ventanas vacías en
+    entrenamiento, pero el secuenciador sí las encuentra como fondo al deslizar; un
+    descriptor de "cantidad de tinta" queda como trabajo futuro (no pedido ahora).
 
 ## Arquitectura
 
@@ -190,23 +228,26 @@ Dos redes neuronales:
 
 ### 1. Dimensionador (CNN)
 - `src/swnist/models/dimensionador.py`
-- CNN que recibe una **región (ventana) de la entrada 2D** (p. ej. ventana 14×14 de una
-  imagen MNIST 28×28) y produce:
-  - `features(x)` → vector de características (`feature_dim`), que es lo que consume el
-    secuenciador;
-  - `forward(x)` → logits de clasificación (10 dígitos, o 11 con la clase "no hay
-    nada" de la regla 22), usados para pre-entrenarlo.
+- CNN que recibe una **región (ventana) de la entrada 2D** (ventana cuadrada, default
+  5×5) y la **describe** con un vector de descriptores geométricos interpretables
+  (ver regla 25 y `src/swnist/descriptors.py`): rectitud (recta/curva), horizontal,
+  vertical, ángulo del trazo (par sin 2θ/cos 2θ) y continuidad (continua/entrecortada).
+  Ya **no clasifica dígitos**.
+  - `forward(x)` → descriptores **crudos** (6), usados por la pérdida (MSE por canal).
+  - `features(x)` = `activate(forward(x))` → los mismos descriptores en su **rango
+    natural**; ese es exactamente el vector que consume el secuenciador (pipeline
+    interpretable). `feature_dim` queda fijo = nº de descriptores (6).
 - Usa pooling adaptativo, por lo que acepta ventanas de cualquier tamaño, pero **el
   tamaño de ventana con el que se entrenó queda en su config** y el secuenciador lo
   reutiliza obligatoriamente.
 - `model.channels` es una **lista de longitud libre (≥1)**: un bloque conv
   (Conv3×3 + ReLU + MaxPool2) por elemento. El MaxPool se omite cuando la ventana ya
   no da más espacio; el pooling adaptativo final mantiene la salida en 3×3. Lista
-  inválida → 400 con razón antes de crear el experimento (2026-07-11).
-- Dataset por defecto del dimensionador en la web app: `mnist_full`
-  (`model.window_size=28`), definido en `nn_registry.py` (2026-07-11). `mnist_full`
-  admite `window_size`/`windows_per_image` para entrenar por ventanas (regla 19) y
-  `sampling`/`stride` para muestrearlas en grilla raster en vez de al azar (regla 24).
+  inválida → 400 con razón antes de crear el experimento. `model.hidden_dim` (default
+  32) es el ancho de la capa densa antes de la cabeza de descriptores.
+- **Único dataset del dimensionador**: `synthetic_strokes` (rectas/curvas sintéticas,
+  regla 25), `model.window_size=5` por defecto (`nn_registry.py`). Ya **no se usan
+  datasets NIST** (mnist_full/mnist_windows) para el dimensionador (2026-07-12).
 
 ### 2. Secuenciador (NN recurrente / retroalimentada)
 - `src/swnist/models/secuenciador.py`
@@ -228,13 +269,15 @@ requirements.txt
 scripts/run_webapp.py      ← lanza la web app (uvicorn, puerto 8000)
 src/swnist/
   repro.py                 ← semillas y captura de entorno
+  descriptors.py           ← contrato de los 6 descriptores del dimensionador (regla 25)
   nn_registry.py           ← catálogo de NNs entrenables + configs por defecto
   validation.py            ← compatibilidad NN↔dataset↔checkpoint (razones claras, 400)
   data/
     windows.py             ← utilidades de ventana deslizante (posiciones, extracción)
     trajectory.py          ← trayectoria por el trazo: esqueleto → camino → num_steps (regla 21)
     strokes.py             ← uniformización del grosor de trazo (stroke_width, regla 23)
-    datasets.py            ← MnistFull, MnistWindows, MnistSlidingSequences (+ display_item)
+    synthstrokes.py        ← dataset sintético de rectas/curvas del dimensionador (regla 25)
+    datasets.py            ← MnistSlidingSequences, MnistContourSequences (secuenciador)
     custom.py              ← datasets custom: CustomDatasetStore (CRUD) + CustomSubset
     registry.py            ← catálogo de datasets (builtin+custom) + compatibilidad por NN
   models/

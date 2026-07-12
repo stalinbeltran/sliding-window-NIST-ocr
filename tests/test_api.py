@@ -62,11 +62,9 @@ def test_api_experiment_not_found(client):
 
 def test_api_foreign_params_rejected_upfront(client):
     """Params ajenos al dataset se rechazan ANTES de crear el experimento, con la
-    razón en el 400. (El caso del bug original — mnist_full con window_size y
-    windows_per_image — ahora es válido: mnist_full acepta esos params, y desde
-    la regla 24 también stride; num_steps sigue siendo ajeno.)"""
+    razón en el 400 (num_steps es de los datasets de secuencias, no del de trazos)."""
     c, _ = client
-    cfg = dim_config("mnist_full", {})
+    cfg = dim_config("synthetic_strokes", {})
     cfg["dataset"]["params"] = {"num_steps": 8}
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 400
@@ -76,8 +74,8 @@ def test_api_foreign_params_rejected_upfront(client):
 def test_api_window_mismatch_rejected_with_reason(client):
     """Entrenar con model.window_size distinto a la entrada del dataset → 400 claro."""
     c, _ = client
-    cfg = dim_config("mnist_full", {})
-    cfg["model"]["window_size"] = 10  # entradas 28×28 con modelo declarado 10×10
+    cfg = dim_config("synthetic_strokes", {})
+    cfg["model"]["window_size"] = 10  # entradas 5×5 con modelo declarado 10×10
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 400
     assert "Medidas incompatibles" in r.json()["detail"]
@@ -86,7 +84,7 @@ def test_api_window_mismatch_rejected_with_reason(client):
 def test_api_invalid_channels_rejected_with_reason(client):
     """channels vacío o con valores no positivos → 400 antes de crear el experimento."""
     c, _ = client
-    cfg = dim_config("mnist_full", {})
+    cfg = dim_config("synthetic_strokes", {})
     cfg["model"]["channels"] = []
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 400
@@ -94,9 +92,9 @@ def test_api_invalid_channels_rejected_with_reason(client):
 
 
 def test_api_full_training_flow(client):
-    """Entrenamiento completo vía API: mnist_full con params correctos."""
+    """Entrenamiento completo vía API: synthetic_strokes con params por defecto."""
     c, manager = client
-    exp_id = _train(c, manager, cfg=dim_config("mnist_full", {}))
+    exp_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {}))
 
     metrics = c.get(f"/api/experiments/{exp_id}/metrics").json()
     assert any(m["type"] == "epoch" for m in metrics)
@@ -114,7 +112,7 @@ def test_api_retrain_init_from(client):
     exp_id = _train(c, manager)
 
     cfg = dim_config(**{"init_from": exp_id})
-    cfg["model"]["feature_dim"] = 999  # debe ser ignorado: manda el checkpoint origen
+    cfg["model"]["hidden_dim"] = 999  # debe ser ignorado: manda el checkpoint origen
     r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg})
     assert r.status_code == 200
     new_id = r.json()["experiment_id"]
@@ -122,7 +120,7 @@ def test_api_retrain_init_from(client):
     info = c.get(f"/api/experiments/{new_id}").json()
     assert info["status"]["status"] == "completed", info["status"]["error"]
     assert info["config"]["init_from"] == exp_id
-    assert info["config"]["model"]["feature_dim"] == 16  # la del origen
+    assert info["config"]["model"]["hidden_dim"] == 16  # la del origen
 
     # init_from de otra NN → 400 con razón
     cfg2 = seq_config(exp_id, **{"init_from": exp_id})
@@ -164,33 +162,25 @@ def test_api_samples_and_predict(client):
     c, manager = client
     exp_id = _train(c, manager)
 
-    r = c.get("/api/datasets/mnist_windows/samples",
-              params={"split": "test", "limit": 5, "params": '{"window_size": 14}'})
+    r = c.get("/api/datasets/synthetic_strokes/samples",
+              params={"split": "test", "limit": 5, "params": '{"window_size": 5}'})
     assert r.status_code == 200
     body = r.json()
     assert body["total"] > 0 and len(body["items"]) == 5
     assert {"index", "label", "png"} <= set(body["items"][0])
+    assert body["items"][0]["label"] in range(4)  # categoría de trazo
 
-    # predicción sobre una ventana (sin trace: la muestra ya es una ventana)
+    # predicción sobre una ventana: el dimensionador devuelve descriptores, no
+    # una distribución de dígitos; no hay trace (la muestra ES la ventana).
     r = c.post("/api/predict", json={
         "experiment": exp_id, "split": "test", "index": 0,
-        "dataset": {"name": "mnist_windows", "params": {"window_size": 14}},
+        "dataset": {"name": "synthetic_strokes", "params": {}},
     })
     assert r.status_code == 200
     p = r.json()
-    assert p["pred"] in range(10) and len(p["probs"]) == 10
+    assert p["kind"] == "descriptors" and len(p["descriptors"]) == 6
+    assert p["pred"] in range(4) and "category" in p and "angle_deg" in p
     assert p["trace"] is None and p["trace_reason"]
-
-    # sobre imagen completa sí hay trace (deslizamiento del dimensionador)
-    r = c.post("/api/predict", json={
-        "experiment": exp_id, "split": "test", "index": 0,
-        "dataset": {"name": "mnist_full", "params": {}},
-    })
-    assert r.status_code == 200
-    t = r.json()["trace"]
-    assert t is not None and t["kind"] == "dimensionador"
-    assert len(t["steps"]) == len(t["positions"]) == 9  # ventana 14, stride 7
-    assert len(t["steps"][0]["probs"]) == 10
 
 
 def test_api_dataset_slide(client):
@@ -213,10 +203,10 @@ def test_api_dataset_slide(client):
               params={"window_size": 5, "stride": 7}).json()
     assert b["steps"] == 25 and "franjas" in b["note"]
 
-    # dataset sin stride propio (ventanas aleatorias) lo dice claramente
-    b = c.get("/api/datasets/mnist_full/slide").json()
-    assert not b["dataset_uses_stride"] and "aleatorias" in b["note"]
-    assert b["steps"] == 1  # ventana 28 = imagen completa
+    # dataset de ventanas sueltas (synthetic_strokes): no hay recorrido deslizante
+    b = c.get("/api/datasets/synthetic_strokes/slide").json()
+    assert b["single_window"] and b["steps"] == 1
+    assert "no hay recorrido" in b["note"]
 
     # dataset de trazo: el recorrido sigue el carácter y depende de la muestra
     b = c.get("/api/datasets/mnist_contour_sequences/slide").json()
@@ -243,7 +233,7 @@ def test_api_secuenciador_eval_and_predict_use_training_stride(client):
     evaluación fija los params efectivos del entrenamiento (400 si se pide otro
     stride) y el predict desliza siempre con la trayectoria real."""
     c, manager = client
-    dim_id = _train(c, manager)  # dimensionador de ventana 14
+    dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
     seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))  # stride 7
 
     # la config del secuenciador registra la trayectoria efectiva
@@ -280,64 +270,36 @@ def test_api_secuenciador_eval_and_predict_use_training_stride(client):
     assert len(t["steps"]) == len(t["positions"]) == 9
 
 
-def test_api_empty_class_end_to_end(client):
-    """Clase 'no hay nada' (10): entrenar con empty_fraction fija num_classes=11,
-    la evaluación mide también los vacíos (matriz 11×11) y el secuenciador
-    consume las features de ese dimensionador sin cambios."""
+def test_api_dimensionador_descriptor_eval_and_secuenciador(client):
+    """El dimensionador de descriptores: la evaluación reporta categorías + error de
+    ángulo/MAE, y el secuenciador consume sus features (6 descriptores) sin cambios."""
     c, manager = client
 
-    # 1) entrenar con ventanas vacías: el backend fija num_classes=11 en la config
-    cfg = dim_config("mnist_windows", {"window_size": 14, "windows_per_image": 2,
-                                       "empty_fraction": 0.3})
-    exp_id = _train(c, manager, cfg=cfg)
-    info = c.get(f"/api/experiments/{exp_id}").json()
-    assert info["config"]["model"]["num_classes"] == 11
+    # dimensionador de descriptores con ventana 14 (para que el secuenciador tenga
+    # dónde deslizar: 14, stride 7 → 9 pasos)
+    dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
 
-    # 2) evaluación con el mismo mix de vacíos: matriz 11×11 y etiquetas 10
+    # evaluación: resumen con estadísticas de descriptores (matriz 4×4 de categorías)
     r = c.post("/api/evaluations", json={
-        "experiment": exp_id, "split": "test", "limit": 100,
-        "dataset": {"name": "mnist_windows",
-                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
+        "experiment": dim_id, "split": "test", "limit": 100,
+        "dataset": {"name": "synthetic_strokes", "params": {"window_size": 14}}})
     assert r.status_code == 200, r.json()
     eval_id = r.json()["evaluation_id"]
     _wait(manager, eval_id)
     info = c.get(f"/api/evaluations/{eval_id}").json()
     assert info["status"]["status"] == "completed", info["status"].get("error")
-    assert len(info["status"]["summary"]["confusion"]) == 11
+    summary = info["status"]["summary"]
+    assert len(summary["confusion"]) == 4  # categorías recta/curva × continua/entrecortada
+    assert "angle_mae_deg" in summary and "descriptor_mae" in summary
+    assert 0 <= summary["acc"] <= 1
 
-    # los vacíos existen y se pueden filtrar por etiqueta 10
-    r = c.get(f"/api/evaluations/{eval_id}/results", params={"label": 10, "limit": 5})
-    empty_rows = r.json()
-    assert empty_rows["total"] > 0
-    assert all(it["label"] == 10 for it in empty_rows["items"])
+    # los resultados por muestra traen los descriptores predichos y el objetivo
+    r = c.get(f"/api/evaluations/{eval_id}/results", params={"limit": 3})
+    items = r.json()["items"]
+    assert items and "descriptors" in items[0] and "target" in items[0]
 
-    # 3) predict sobre una muestra vacía: probs de 11 clases
-    r = c.post("/api/predict", json={
-        "experiment": exp_id, "split": "test", "index": empty_rows["items"][0]["index"],
-        "dataset": {"name": "mnist_windows",
-                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
-    assert r.status_code == 200, r.json()
-    p = r.json()
-    assert p["label"] == 10 and len(p["probs"]) == 11
-
-    # 4) un modelo SIN la clase vacía no se puede evaluar con vacíos (400 con razón)
-    plain_id = _train(c, manager)  # dimensionador clásico de 10 clases
-    r = c.post("/api/evaluations", json={
-        "experiment": plain_id, "split": "test", "limit": 16,
-        "dataset": {"name": "mnist_windows",
-                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
-    assert r.status_code == 400
-    assert "no hay nada" in r.json()["detail"]
-
-    # 5) re-entrenar un modelo de 10 clases con un dataset con vacíos → 400
-    cfg2 = dim_config("mnist_windows", {"window_size": 14, "empty_fraction": 0.3},
-                      **{"init_from": plain_id})
-    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg2})
-    assert r.status_code == 400
-    assert "no hay nada" in r.json()["detail"]
-
-    # 6) el secuenciador entrena sobre el dimensionador con clase vacía
-    seq_id = _train(c, manager, "secuenciador", seq_config(exp_id))
+    # el secuenciador entrena consumiendo las features (6 descriptores) del dimensionador
+    seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))
     r = c.post("/api/predict", json={
         "experiment": seq_id, "split": "test", "index": 0,
         "dataset": {"name": "mnist_sliding_sequences", "params": {}}})
@@ -361,7 +323,7 @@ def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
     # evaluación válida
     r = c.post("/api/evaluations", json={
         "experiment": exp_id, "split": "test", "limit": 64,
-        "dataset": {"name": "mnist_windows", "params": {"window_size": 14}},
+        "dataset": {"name": "synthetic_strokes", "params": {}},
     })
     assert r.status_code == 200, r.json()
     eval_id = r.json()["evaluation_id"]

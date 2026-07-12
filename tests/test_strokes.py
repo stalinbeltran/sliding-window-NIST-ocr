@@ -72,22 +72,24 @@ class TestUniformStroke:
 
 class TestStrokeWidthParam:
     def test_zero_reproduces_original_samples(self):
-        plain = build_dataset("mnist_full", {}, train=True, seed=42)
-        explicit = build_dataset("mnist_full", {"stroke_width": 0}, train=True, seed=42)
-        img_a, label_a = plain[0]
-        img_b, label_b = explicit[0]
-        assert label_a == label_b and torch.equal(img_a, img_b)
+        # stroke_width=0 deja el trazo original intacto (passthrough a la imagen base).
+        ds = build_dataset("mnist_sliding_sequences", {"stride": 7, "stroke_width": 0},
+                           train=True, seed=42)
+        img, label = ds.display_item(0)
+        base_img, base_label = ds.base[0]
+        assert label == base_label and torch.equal(img, base_img)
 
     def test_transforms_samples_deterministically(self):
-        ds1 = build_dataset("mnist_full", {"stroke_width": 3}, train=True, seed=42)
-        ds2 = build_dataset("mnist_full", {"stroke_width": 3}, train=True, seed=42)
-        plain = build_dataset("mnist_full", {}, train=True, seed=42)
-        img1, _ = ds1[0]
-        img2, _ = ds2[0]
+        base = {"stride": 7}
+        ds1 = build_dataset("mnist_sliding_sequences", {**base, "stroke_width": 3},
+                            train=True, seed=42)
+        ds2 = build_dataset("mnist_sliding_sequences", {**base, "stroke_width": 3},
+                            train=True, seed=42)
+        plain = build_dataset("mnist_sliding_sequences", base, train=True, seed=42)
+        img1, _ = ds1.display_item(0)
+        img2, _ = ds2.display_item(0)
         assert torch.equal(img1, img2)
-        assert not torch.equal(img1, plain[0][0])
-        # display_item también muestra la imagen transformada
-        assert torch.equal(ds1.display_item(0)[0], img1)
+        assert not torch.equal(img1, plain.display_item(0)[0])
 
     def test_sequence_datasets_accept_stroke_width(self):
         for name, extra in [("mnist_sliding_sequences", {"stride": 7}),
@@ -109,9 +111,11 @@ class TestStrokeWidthParam:
     @pytest.mark.parametrize("bad", [-1, 1.5, True, 29, "3"])
     def test_invalid_values_rejected_with_reason(self, bad):
         with pytest.raises(ValueError, match="stroke_width"):
-            validate_dataset_params("mnist_full", {"stroke_width": bad})
+            validate_dataset_params("mnist_sliding_sequences", {"stroke_width": bad})
 
     def test_accepted_by_every_builtin_dataset(self):
-        for name in ("mnist_full", "mnist_windows",
-                     "mnist_sliding_sequences", "mnist_contour_sequences"):
+        # Los datasets de secuencias aceptan stroke_width entero; el de trazos lo
+        # acepta también (como grosor del trazo sintético).
+        for name in ("synthetic_strokes", "mnist_sliding_sequences",
+                     "mnist_contour_sequences"):
             validate_dataset_params(name, {"stroke_width": 3})

@@ -1,7 +1,8 @@
-"""Datasets sobre MNIST para el dimensionador y el secuenciador.
+"""Datasets sobre MNIST para el secuenciador (secuencias de ventanas).
 
-Todos son deterministas dado (params, seed): las ventanas aleatorias se derivan
-de una RNG sembrada por (seed, index) para que un experimento sea reproducible.
+El dataset del dimensionador (rectas/curvas sintéticas) vive en
+``swnist.data.synthstrokes``. Aquí quedan solo los datasets de secuencias que
+recorren dígitos MNIST reales. Todos son deterministas dado (params, seed).
 """
 
 import torch
@@ -15,17 +16,7 @@ from .windows import extract_window, grid_positions, normalize_position
 
 IMAGE_SIZE = 28
 
-# Clase extra "no hay nada en este recuadro": ventanas sin píxeles activos,
-# generadas automáticamente con `empty_fraction`. El dimensionador que la usa
-# se entrena con num_classes = EMPTY_LABEL + 1 (los 10 dígitos + vacío), y así
-# sus features le comunican al secuenciador que la región observada está vacía.
-EMPTY_LABEL = 10
-
 _MEAN, _STD = 0.1307, 0.3081
-# Umbral de "píxel activo" sobre el gris original en [0, 1]: una ventana vacía
-# no debe contener NINGÚN píxel por encima (más estricto que el umbral de
-# tinta del esqueleto, que solo busca el trazo fuerte).
-EMPTY_INK_THRESHOLD = 0.05
 
 _TRANSFORM = transforms.Compose([
     transforms.ToTensor(),
@@ -35,151 +26,6 @@ _TRANSFORM = transforms.Compose([
 
 def load_mnist(train: bool) -> datasets.MNIST:
     return datasets.MNIST(str(DATA_DIR), train=train, download=True, transform=_TRANSFORM)
-
-
-class MnistFull(Dataset):
-    """Imágenes MNIST completas, adaptables a cualquier tamaño de ventana.
-
-    Compatible con: dimensionador. Con los defaults (window_size=28,
-    windows_per_image=1) cada muestra es la imagen completa 28×28. Con
-    window_size < 28 cada muestra es una ventana aleatoria de la imagen
-    (determinista dado (seed, idx)), con `windows_per_image` muestras por
-    imagen; la muestra visible (display_item) sigue siendo la imagen completa.
-
-    Con sampling="raster" las ventanas no son aleatorias: cada imagen produce
-    la grilla completa de posiciones (window_size, stride) en orden raster
-    (windows.grid_positions, la misma que recorre el secuenciador), así que
-    `windows_per_image` se ignora — el número de ventanas por imagen lo dicta
-    la grilla. Sin RNG: determinista dado (params, idx).
-
-    Con empty_fraction > 0, esa fracción de las muestras es una ventana SIN
-    píxeles activos etiquetada EMPTY_LABEL (10, "no hay nada en este
-    recuadro"): se toma de una región vacía de la misma imagen y, si la imagen
-    no tiene ninguna, es una ventana de fondo puro. También determinista dado
-    (seed, idx).
-
-    Con stroke_width > 0 el carácter se redibuja con trazo de grosor uniforme
-    (ver swnist.data.strokes) antes de extraer ventanas: un dataset "más
-    uniforme" donde trazos gruesos y delgados se ven iguales.
-    """
-
-    def __init__(
-        self,
-        train: bool = True,
-        seed: int = 0,
-        window_size: int = IMAGE_SIZE,
-        windows_per_image: int = 1,
-        sampling: str = "random",
-        stride: int = 7,
-        empty_fraction: float = 0.0,
-        stroke_width: int = 0,
-    ):
-        self.base = load_mnist(train)
-        self.window_size = int(window_size)
-        self.windows_per_image = int(windows_per_image)
-        self.sampling = str(sampling)
-        self.stride = int(stride)
-        self.empty_fraction = float(empty_fraction)
-        self.stroke_width = int(stroke_width)
-        self._strokes = StrokeUniformizer(stroke_width)
-        self.seed = seed
-        if self.sampling == "raster":
-            self._positions = grid_positions(IMAGE_SIZE, self.window_size, self.stride)
-            self._per_image = len(self._positions)
-        else:
-            self._positions = None
-            self._per_image = self.windows_per_image
-
-    def _image(self, base_idx) -> tuple[torch.Tensor, int]:
-        """Imagen base con el trazo uniformizado (si stroke_width > 0)."""
-        image, label = self.base[base_idx]
-        return self._strokes(image, base_idx), label
-
-    def __len__(self):
-        return len(self.base) * self._per_image
-
-    def _gen(self, idx) -> torch.Generator:
-        return torch.Generator().manual_seed(self.seed * 1_000_003 + idx)
-
-    def _is_empty_sample(self, idx) -> bool:
-        # Primer uso de la RNG de la muestra, para que la decisión (y por tanto
-        # la etiqueta visible) no dependa de qué más se genere después. Con
-        # empty_fraction=0 la RNG no se toca: las muestras de configs antiguas
-        # se reproducen idénticas.
-        if self.empty_fraction <= 0:
-            return False
-        return torch.rand(1, generator=self._gen(idx)).item() < self.empty_fraction
-
-    def _empty_window(self, image: torch.Tensor, gen: torch.Generator) -> torch.Tensor:
-        """Ventana sin píxeles activos: región vacía de la imagen o fondo puro."""
-        ws = self.window_size
-        blank = torch.full((1, ws, ws), (0.0 - _MEAN) / _STD)
-        if ws >= IMAGE_SIZE:
-            return blank
-        active = (image.squeeze(0) * _STD + _MEAN) > EMPTY_INK_THRESHOLD
-        # Píxeles activos por ventana en cada posición válida (H-ws+1, W-ws+1)
-        counts = active.float().unfold(0, ws, 1).unfold(1, ws, 1).sum((-1, -2))
-        empties = (counts == 0).nonzero()
-        if len(empties) == 0:
-            return blank
-        i = int(torch.randint(0, len(empties), (1,), generator=gen).item())
-        top, left = int(empties[i][0]), int(empties[i][1])
-        return extract_window(image, top, left, ws)
-
-    def __getitem__(self, idx):
-        image, label = self._image(idx // self._per_image)
-        gen = None
-        if self.empty_fraction > 0:
-            gen = self._gen(idx)
-            if torch.rand(1, generator=gen).item() < self.empty_fraction:
-                return self._empty_window(image, gen), EMPTY_LABEL
-        if self.sampling == "raster":
-            top, left = self._positions[idx % self._per_image]
-            return extract_window(image, top, left, self.window_size), label
-        if self.window_size >= IMAGE_SIZE:
-            return image, label  # (image (1,28,28), label)
-        if gen is None:
-            gen = self._gen(idx)
-        last = IMAGE_SIZE - self.window_size
-        top = int(torch.randint(0, last + 1, (1,), generator=gen).item())
-        left = int(torch.randint(0, last + 1, (1,), generator=gen).item())
-        return extract_window(image, top, left, self.window_size), label
-
-    def display_item(self, idx):
-        """(imagen mostrable, etiqueta): la imagen completa de la que sale la
-        ventana, con la etiqueta EFECTIVA de la muestra (EMPTY_LABEL si es una
-        ventana vacía)."""
-        image, label = self._image(idx // self._per_image)
-        return image, EMPTY_LABEL if self._is_empty_sample(idx) else label
-
-
-class MnistWindows(MnistFull):
-    """Ventanas de imágenes MNIST, etiquetadas con el dígito de origen.
-
-    Compatible con: dimensionador. Misma generación de ventanas que MnistFull
-    (aleatorias, o en grilla raster con sampling="raster"), pero la muestra
-    visible es la ventana misma (lo que recibe la NN).
-    """
-
-    def __init__(
-        self,
-        train: bool = True,
-        window_size: int = 14,
-        windows_per_image: int = 4,
-        sampling: str = "random",
-        stride: int = 7,
-        seed: int = 0,
-        empty_fraction: float = 0.0,
-        stroke_width: int = 0,
-    ):
-        super().__init__(train=train, seed=seed, window_size=window_size,
-                         windows_per_image=windows_per_image,
-                         sampling=sampling, stride=stride,
-                         empty_fraction=empty_fraction, stroke_width=stroke_width)
-
-    def display_item(self, idx):
-        """La muestra visible es la ventana misma (lo que recibe la NN)."""
-        return self[idx]
 
 
 class MnistSlidingSequences(Dataset):

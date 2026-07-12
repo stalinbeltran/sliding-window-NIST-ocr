@@ -6,37 +6,24 @@ con la NN seleccionada. Los datasets custom (subconjuntos filtrados, ver
 """
 
 from .custom import CustomDatasetStore, CustomSubset
-from .datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
-                       MnistSlidingSequences, MnistWindows)
+from .datasets import (IMAGE_SIZE, MnistContourSequences,
+                       MnistSlidingSequences)
+from .synthstrokes import STROKE_DEFAULTS, SyntheticStrokes
+from .synthstrokes import validate_params as _validate_stroke_params
 
 DATASETS = {
-    "mnist_full": {
-        "description": "Imágenes MNIST completas 28×28; con window_size < 28 entrena "
-                       "con ventanas de cada imagen: sampling='random' toma "
-                       "windows_per_image ventanas aleatorias, sampling='raster' recorre "
-                       "la grilla window_size+stride completa (ignora windows_per_image). "
-                       "Con empty_fraction > 0 esa fracción son ventanas vacías con la "
-                       "clase extra 'no hay nada' (10). stroke_width > 0 uniformiza el "
-                       "grosor del trazo a ~N px (0 = original).",
+    "synthetic_strokes": {
+        "description": "Dataset sintético de rectas/curvas (continuas/entrecortadas) "
+                       "para el dimensionador: cada muestra es una ventana cuadrada "
+                       "(default 5×5) con un trazo y un vector de descriptores "
+                       "geométricos como target (rectitud, horizontal, vertical, "
+                       "ángulo, continuidad). El conjunto se define por rangos "
+                       "JSON-editables (ángulo, longitud, curvatura, guiones, grosor) "
+                       "y num_samples. Nunca hay ventanas vacías; sí trazos cortos.",
         "compatible_with": ["dimensionador"],
-        "builder": MnistFull,
-        "defaults": {"window_size": 5, "windows_per_image": 30, "sampling": "raster",
-                     "stride": 5, "empty_fraction": 0.1, "stroke_width": 1},
-        "full_image": True,   # la muestra visible es una imagen completa 28×28
-    },
-    "mnist_windows": {
-        "description": "Ventanas de MNIST etiquetadas con el dígito de origen: "
-                       "sampling='random' toma windows_per_image ventanas aleatorias por "
-                       "imagen, sampling='raster' recorre la grilla window_size+stride "
-                       "completa (ignora windows_per_image). Con empty_fraction > 0 esa "
-                       "fracción son ventanas vacías con la clase extra 'no hay nada' "
-                       "(10). stroke_width > 0 uniformiza el grosor del trazo a ~N px "
-                       "(0 = original).",
-        "compatible_with": ["dimensionador"],
-        "builder": MnistWindows,
-        "defaults": {"window_size": 5, "windows_per_image": 4, "sampling": "raster",
-                     "stride": 5, "empty_fraction": 0.1, "stroke_width": 1},
-        "full_image": False,
+        "builder": SyntheticStrokes,
+        "defaults": dict(STROKE_DEFAULTS),
+        "full_image": False,   # la muestra visible es la ventana misma
     },
     "mnist_sliding_sequences": {
         "description": "Secuencias de ventanas (recorrido raster) con posición (x, y) "
@@ -115,9 +102,11 @@ def validate_dataset_params(name: str, params: dict) -> None:
     if name in DATASETS:
         accepted = DATASETS[name]["defaults"]
         base_params = accepted
+        base_name = name
     else:
         d = custom_store.get(name)
-        accepted = DATASETS[d["base"]["name"]]["defaults"]
+        base_name = d["base"]["name"]
+        accepted = DATASETS[base_name]["defaults"]
         base_params = {**accepted, **d["base"]["params"]}
     unknown = set(params) - set(accepted)
     if unknown:
@@ -126,21 +115,33 @@ def validate_dataset_params(name: str, params: dict) -> None:
             f"Parámetros aceptados: {sorted(accepted) or ['(ninguno)']}. Revisa que "
             f"config.dataset.params corresponda al dataset seleccionado."
         )
+
+    if base_name == "synthetic_strokes":
+        # El dataset de trazos valida sus propios rangos (ángulo, longitud,
+        # curvatura, guiones, grosor, num_samples).
+        _validate_stroke_params(params)
+        if name not in DATASETS:
+            # Todos sus params definen la identidad/target de cada muestra: cambiar
+            # cualquiera remapearía los índices guardados del subconjunto.
+            changed = [k for k, v in params.items() if base_params.get(k) != v]
+            if changed:
+                raise ValueError(
+                    f"No se puede cambiar {sorted(changed)} en el dataset custom "
+                    f"{name!r}: los parámetros de generación definen cada muestra y "
+                    f"sus índices dejarían de apuntar a los mismos trazos. Crea un "
+                    f"subconjunto nuevo si necesitas otros rangos.")
+        return
+
+    # Datasets de secuencias (secuenciador): ventana + trayectoria (stride/num_steps)
+    # y grosor de trazo.
     ws = params.get("window_size")
     if ws is not None and not (isinstance(ws, int) and 1 <= ws <= IMAGE_SIZE):
         raise ValueError(
             f"window_size debe ser un entero entre 1 y {IMAGE_SIZE} (las imágenes "
             f"MNIST son de {IMAGE_SIZE}×{IMAGE_SIZE}); recibido: {ws!r}.")
-    for key in ("windows_per_image", "stride"):
-        v = params.get(key)
-        if v is not None and (not isinstance(v, int) or v < 1):
-            raise ValueError(f"{key} debe ser un entero ≥ 1; recibido: {v!r}.")
-    samp = params.get("sampling")
-    if samp is not None and samp not in ("random", "raster"):
-        raise ValueError(
-            f"sampling debe ser 'random' (windows_per_image ventanas aleatorias "
-            f"por imagen) o 'raster' (la grilla determinista window_size+stride "
-            f"que cubre la imagen, ignorando windows_per_image); recibido: {samp!r}.")
+    v = params.get("stride")
+    if v is not None and (not isinstance(v, int) or v < 1):
+        raise ValueError(f"stride debe ser un entero ≥ 1; recibido: {v!r}.")
     ns = params.get("num_steps")
     if ns is not None and (not isinstance(ns, int) or ns < 2):
         raise ValueError(
@@ -153,41 +154,6 @@ def validate_dataset_params(name: str, params: dict) -> None:
             f"stroke_width debe ser un entero entre 0 y {IMAGE_SIZE}: 0 deja el "
             f"trazo original y N > 0 redibuja el carácter con trazo de ~N px de "
             f"grosor uniforme (esqueleto re-entintado); recibido: {sw!r}.")
-    ef = params.get("empty_fraction")
-    if ef is not None and (isinstance(ef, bool) or not isinstance(ef, (int, float))
-                           or not 0 <= ef < 1):
-        raise ValueError(
-            f"empty_fraction debe ser un número en [0, 1): la fracción de muestras "
-            f"que son ventanas vacías con la clase 'no hay nada' (con 1 no quedaría "
-            f"ningún dígito que aprender); recibido: {ef!r}.")
-    if name not in DATASETS:
-        for key in ("windows_per_image", "empty_fraction"):
-            if key in params and params[key] != base_params.get(key):
-                raise ValueError(
-                    f"No se puede cambiar {key} en el dataset custom {name!r}: sus "
-                    f"índices se guardaron con {key}={base_params.get(key)} y dejarían "
-                    f"de apuntar a las mismas muestras (con otro empty_fraction hasta "
-                    f"la etiqueta de una muestra cambiaría). Crea un subconjunto nuevo "
-                    f"si necesitas otro valor.")
-        if "sampling" in accepted:
-            eff_sampling = base_params.get("sampling", "random")
-            if "sampling" in params and params["sampling"] != eff_sampling:
-                raise ValueError(
-                    f"No se puede cambiar sampling en el dataset custom {name!r}: sus "
-                    f"índices se guardaron con sampling={eff_sampling!r} y con otro "
-                    f"muestreo dejarían de apuntar a las mismas ventanas. Crea un "
-                    f"subconjunto nuevo si necesitas otro muestreo.")
-            if eff_sampling == "raster":
-                for key in ("window_size", "stride"):
-                    if key in params and params[key] != base_params.get(key):
-                        raise ValueError(
-                            f"No se puede cambiar {key} en el dataset custom {name!r}: "
-                            f"con sampling='raster' la grilla (window_size, stride) "
-                            f"define cuántas ventanas salen de cada imagen, y sus "
-                            f"índices se guardaron con la grilla window_size="
-                            f"{base_params.get('window_size')}, stride="
-                            f"{base_params.get('stride')}. Crea un subconjunto nuevo "
-                            f"si necesitas otra grilla.")
 
 
 def effective_params(name: str, params: dict) -> dict:

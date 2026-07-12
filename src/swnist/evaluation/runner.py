@@ -16,12 +16,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from swnist.data.registry import build_dataset
+from swnist.descriptors import (CATEGORIES, IDX, NAMES, activate,
+                                angle_error_deg, boundary_margin, category_index)
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.models.dimensionador import Dimensionador
 from swnist.models.secuenciador import Secuenciador
 from swnist.training.common import get_device
 from swnist.training.train_secuenciador import compute_features
 from swnist.validation import sequence_effective_params
+
+_SI, _CI = IDX["angle_sin2"], IDX["angle_cos2"]
 
 from .registry import EvaluationRegistry
 
@@ -82,11 +86,15 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     eval_registry.update_status(eval_id, status="running", started_at=_now(),
                                 progress={"done": 0, "total": total})
     done, correct_total, stopped = 0, 0, False
-    # Tamaño de la matriz = clases del modelo (11 si tiene la clase 'no hay
-    # nada'); la validación garantiza que el dataset no produce etiquetas fuera.
-    num_classes = int(model.config.get("num_classes", 10))
+    # El dimensionador regresa descriptores: se resume por CATEGORÍA discreta
+    # (recta/curva × continua/entrecortada) para reutilizar la grilla de confusión
+    # y los filtros. El secuenciador sigue clasificando dígitos.
+    is_dim = nn_name == "dimensionador"
+    num_classes = len(CATEGORIES) if is_dim else int(model.config.get("num_classes", 10))
     confusion = [[0] * num_classes for _ in range(num_classes)]
     per_step_correct = None
+    desc_err_sum = [0.0] * len(NAMES)   # MAE por descriptor (solo dimensionador)
+    angle_err_sum = 0.0
 
     with torch.no_grad():
         for batch in loader:
@@ -94,11 +102,29 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
                 stopped = True
                 break
             records = []
-            if nn_name == "dimensionador":
-                x, y = batch
-                probs = F.softmax(model(x.to(device)), dim=-1)
-                pred, conf, margin = _stats(probs)
-                extra = [{}] * len(y)
+            if is_dim:
+                x, y = batch  # y: targets (B, 6)
+                pred_desc = activate(model(x.to(device))).cpu()  # (B, 6)
+                for i in range(pred_desc.shape[0]):
+                    p, t = pred_desc[i], y[i]
+                    pcat, tcat = category_index(p), category_index(t)
+                    ok = pcat == tcat
+                    correct_total += ok
+                    confusion[tcat][pcat] += 1
+                    ang = angle_error_deg(p[_SI], p[_CI], t[_SI], t[_CI])
+                    angle_err_sum += ang
+                    errs = (p - t).abs()
+                    for k in range(len(NAMES)):
+                        desc_err_sum[k] += float(errs[k])
+                    records.append({
+                        "index": done + i, "label": tcat, "pred": pcat, "correct": ok,
+                        "conf": round(1.0 - boundary_margin(p) / 2.0, 4),
+                        "margin": round(boundary_margin(p), 4),
+                        "angle_err_deg": round(ang, 2),
+                        "descriptors": {n: round(float(p[k]), 3) for k, n in enumerate(NAMES)},
+                        "target": {n: round(float(t[k]), 3) for k, n in enumerate(NAMES)},
+                    })
+                done += pred_desc.shape[0]
             else:
                 windows, positions, y = batch
                 feats = compute_features(dim_model, windows.to(device), freeze=True)
@@ -111,19 +137,18 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
                 per_step_correct = step_ok if per_step_correct is None \
                     else per_step_correct + step_ok
                 extra = [{"pred_steps": ps} for ps in preds_steps.cpu().tolist()]
-
-            y = y.tolist()
-            pred, conf, margin = pred.cpu().tolist(), conf.cpu().tolist(), margin.cpu().tolist()
-            for i, label in enumerate(y):
-                ok = pred[i] == label
-                correct_total += ok
-                confusion[label][pred[i]] += 1
-                records.append({
-                    "index": done + i, "label": label, "pred": pred[i],
-                    "correct": ok, "conf": round(conf[i], 4),
-                    "margin": round(margin[i], 4), **extra[i],
-                })
-            done += len(y)
+                y = y.tolist()
+                pred, conf, margin = pred.cpu().tolist(), conf.cpu().tolist(), margin.cpu().tolist()
+                for i, label in enumerate(y):
+                    ok = pred[i] == label
+                    correct_total += ok
+                    confusion[label][pred[i]] += 1
+                    records.append({
+                        "index": done + i, "label": label, "pred": pred[i],
+                        "correct": ok, "conf": round(conf[i], 4),
+                        "margin": round(margin[i], 4), **extra[i],
+                    })
+                done += len(y)
             eval_registry.append_results(eval_id, records)
             eval_registry.update_status(eval_id, progress={"done": done, "total": total})
 
@@ -133,6 +158,11 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
         "errors": done - correct_total,
         "confusion": confusion,
     }
+    if is_dim and done:
+        summary["categories"] = CATEGORIES
+        summary["angle_mae_deg"] = round(angle_err_sum / done, 3)
+        summary["descriptor_mae"] = {n: round(desc_err_sum[k] / done, 4)
+                                     for k, n in enumerate(NAMES)}
     if per_step_correct is not None and done:
         summary["per_step_acc"] = [round(c / done, 5) for c in per_step_correct.tolist()]
     eval_registry.update_status(

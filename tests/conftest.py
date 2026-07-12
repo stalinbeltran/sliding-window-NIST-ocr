@@ -56,14 +56,13 @@ def tmp_custom_store(tmp_path, monkeypatch):
     return store
 
 
-def dim_config(dataset_name="mnist_windows", dataset_params=None, epochs=1, **extra):
+def dim_config(dataset_name="synthetic_strokes", dataset_params=None, epochs=1, **extra):
     params = dataset_params or {}
     # model.window_size debe reflejar la entrada real (regla de compatibilidad)
-    window = params.get("window_size", 28 if dataset_name == "mnist_full" else 14)
+    window = params.get("window_size", 5)
     return {
         "dataset": {"name": dataset_name, "params": params},
-        "model": {"window_size": window, "feature_dim": 16, "num_classes": 10,
-                  "channels": [8, 16]},
+        "model": {"window_size": window, "hidden_dim": 16, "channels": [8, 16]},
         "training": {"epochs": epochs, "batch_size": 64, "lr": 0.001, "weight_decay": 0.0,
                      "seed": 42, "val_fraction": 0.1, "log_every": 2},
         **extra,
