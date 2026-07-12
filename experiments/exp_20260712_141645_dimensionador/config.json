@@ -1,0 +1,41 @@
+{
+  "nn": "dimensionador",
+  "dataset": {
+    "name": "synthetic_strokes",
+    "params": {
+      "window_size": 5,
+      "num_samples": 20000,
+      "curved_fraction": 0.5,
+      "broken_fraction": 0.5,
+      "angle_min_deg": 0,
+      "angle_max_deg": 180,
+      "length_min": 1.5,
+      "length_max": 6,
+      "curvature_min": 0.15,
+      "curvature_max": 0.6,
+      "dash_duty_min": 0.35,
+      "dash_duty_max": 0.7,
+      "dash_period_min": 1.2,
+      "dash_period_max": 2.5,
+      "stroke_width": 1,
+      "empty_fraction": 0.1
+    }
+  },
+  "model": {
+    "window_size": 5,
+    "hidden_dim": 32,
+    "channels": [
+      16,
+      32
+    ]
+  },
+  "training": {
+    "epochs": 5,
+    "batch_size": 128,
+    "lr": 0.001,
+    "weight_decay": 0,
+    "seed": 42,
+    "val_fraction": 0.1,
+    "log_every": 50
+  }
+}
