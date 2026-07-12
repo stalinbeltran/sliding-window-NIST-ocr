@@ -20,6 +20,10 @@ const del = (path) => api(path, { method: "DELETE" });
 let NNS = [];
 let currentDetail = null;
 
+// Clase extra del dimensionador: "no hay nada en este recuadro" (ventana vacía).
+const EMPTY_LABEL = 10;
+const fmtLabel = (v) => (v === EMPTY_LABEL ? "∅" : v);
+
 // ---------- gráficas (canvas, sin librerías) ----------
 
 const COLORS = ["#2f6fed", "#d64545", "#1a7f37", "#b57d00"];
@@ -105,12 +109,6 @@ async function loadNNs() {
 let DATASETS = []; // datasets compatibles con la NN seleccionada (con sus defaults)
 let TRAIN_EXPS = []; // experimentos de la NN seleccionada (para init_from)
 
-function effectiveWindow(dsEntry, params) {
-  // Los defaults del catálogo ya incluyen window_size (los custom heredan los del base).
-  const merged = { ...dsEntry.defaults, ...params };
-  return merged.window_size ?? 28;
-}
-
 async function onNNChange() {
   const nn = $("nn-select").value;
   const spec = NNS.find((n) => n.name === nn);
@@ -159,10 +157,9 @@ function onDatasetChange() {
       // Sincronizar nombre Y parámetros: cada dataset acepta parámetros distintos.
       config.dataset.name = spec.name;
       config.dataset.params = JSON.parse(JSON.stringify(spec.defaults));
-      // El dimensionador debe declarar la ventana con la que realmente entrena.
-      if ($("nn-select").value === "dimensionador" && config.model && !config.init_from) {
-        config.model.window_size = effectiveWindow(spec, config.dataset.params);
-      }
+      // El dimensionador debe declarar la ventana (y las clases) con las que
+      // realmente entrena.
+      syncDimensionadorWindow(config);
       $("config-json").value = JSON.stringify(config, null, 2);
     }
   } catch { /* config siendo editada a mano */ }
@@ -198,18 +195,29 @@ function onInitFromChange() {
 }
 
 function syncDimensionadorWindow(config) {
-  // model.window_size refleja SIEMPRE la entrada real del dataset (regla 13).
+  // model.window_size (y model.num_classes) reflejan SIEMPRE la entrada real
+  // del dataset (regla 13): ventana efectiva, y 11 clases cuando el dataset
+  // produce ventanas vacías (empty_fraction > 0, clase 'no hay nada').
   // onDatasetChange lo sincroniza al cambiar el desplegable; esto cubre editar
-  // dataset.params.window_size a mano en el JSON. Con init_from no se toca:
-  // la arquitectura la dicta el experimento origen.
+  // dataset.params a mano en el JSON. Con init_from no se toca: la
+  // arquitectura la dicta el experimento origen.
   if ($("nn-select").value !== "dimensionador") return false;
   if (!config || config.init_from || !config.model || !config.dataset) return false;
   const spec = DATASETS.find((d) => d.name === config.dataset.name);
   if (!spec) return false;
-  const ws = effectiveWindow(spec, config.dataset.params || {});
-  if (config.model.window_size === ws) return false;
-  config.model.window_size = ws;
-  return true;
+  let changed = false;
+  const merged = { ...spec.defaults, ...(config.dataset.params || {}) };
+  const ws = merged.window_size ?? 28;
+  if (config.model.window_size !== ws) {
+    config.model.window_size = ws;
+    changed = true;
+  }
+  const numClasses = (merged.empty_fraction ?? 0) > 0 ? EMPTY_LABEL + 1 : 10;
+  if ((config.model.num_classes ?? 10) !== numClasses) {
+    config.model.num_classes = numClasses;
+    changed = true;
+  }
+  return changed;
 }
 
 $("config-json").addEventListener("change", () => {
@@ -391,8 +399,15 @@ function testDatasetParams() {
   const ds = TEST_DS.find((d) => d.name === $("test-dataset-select").value);
   if (!ds) return {};
   const params = JSON.parse(JSON.stringify(ds.defaults));
-  if (exp && exp.config.nn === "dimensionador" && "window_size" in params) {
-    params.window_size = exp.config.model.window_size;
+  if (exp && exp.config.nn === "dimensionador") {
+    if ("window_size" in params) params.window_size = exp.config.model.window_size;
+    // Mismo mix de ventanas vacías que en el entrenamiento: un modelo con la
+    // clase 'no hay nada' se evalúa también sobre ella (y uno sin la clase,
+    // sin vacíos — el servidor rechaza la combinación inválida con 400).
+    if ("empty_fraction" in params) {
+      const ef = exp.config.dataset?.params?.empty_fraction;
+      params.empty_fraction = ef !== undefined ? ef : 0.0;
+    }
   }
   if (exp && exp.config.nn === "secuenciador") {
     const tp = exp.config.dataset?.params || {};
@@ -575,7 +590,7 @@ function renderGrid(items) {
     div.className = "cell" + (it.correct === undefined ? "" : it.correct ? " ok" : " fail");
     div.innerHTML = `
       <img src="data:image/png;base64,${it.png}" alt="muestra ${it.index}">
-      <span class="tag">#${it.index} · ${it.label}${it.pred !== undefined ? "→" + it.pred : ""}</span>`;
+      <span class="tag">#${it.index} · ${fmtLabel(it.label)}${it.pred !== undefined ? "→" + fmtLabel(it.pred) : ""}</span>`;
     div.addEventListener("click", () => {
       grid.querySelectorAll(".cell.selected").forEach((c) => c.classList.remove("selected"));
       div.classList.add("selected");
@@ -643,7 +658,7 @@ function showSample() {
     `#${r.index} — ${r.nn} ${r.experiment}`;
   const ok = r.pred === r.label;
   $("sample-verdict").innerHTML =
-    `Etiqueta <b>${r.label}</b> · predicción <b>${r.pred}</b> ` +
+    `Etiqueta <b>${fmtLabel(r.label)}</b> · predicción <b>${fmtLabel(r.pred)}</b> ` +
     `(conf ${r.conf}, margen ${r.margin}) — ` +
     (ok ? `<span class="verdict-ok">acierto</span>` : `<span class="verdict-fail">fallo</span>`) +
     (r.margin < 0.2 ? ` · <b>ambigua</b>` : "");
@@ -679,7 +694,7 @@ function renderSampleStep() {
     }
     $("anim-step").textContent =
       `paso ${animIdx + 1}/${t.steps.length} · ventana ${t.window_size}` +
-      (t.stride ? ` · stride ${t.stride}` : "") + ` · salida: ${stepPred}`;
+      (t.stride ? ` · stride ${t.stride}` : "") + ` · salida: ${fmtLabel(stepPred)}`;
   }
   renderProbBars(probs, r.label, r.pred);
 }
@@ -692,7 +707,7 @@ function renderProbBars(probs, label, finalPred) {
     row.className = "bar-row" +
       (d === label ? " is-label" : d === finalPred && finalPred !== label ? " is-pred-wrong" : "");
     row.innerHTML = `
-      <span class="digit">${d}</span>
+      <span class="digit">${fmtLabel(d)}</span>
       <div class="bar-bg"><div class="bar" style="width:${(p * 100).toFixed(1)}%"></div></div>
       <span class="val">${p.toFixed(3)}</span>`;
     box.appendChild(row);
@@ -704,14 +719,15 @@ function drawTraceChart() {
   const T = t.steps.length;
   const seriesFor = (cls) => t.steps.map((s, i) => ({ x: i + 1, y: s.probs[cls] }));
   const series = [];
-  for (let c = 0; c < 10; c++) {
+  const numClasses = t.steps[0].probs.length; // 11 si el modelo tiene la clase ∅
+  for (let c = 0; c < numClasses; c++) {
     if (c === r.label || c === r.pred) continue;
     series.push({ label: null, points: seriesFor(c), color: GRAY, width: 1 });
   }
   if (r.pred !== r.label) {
-    series.push({ label: `predicción ${r.pred}`, points: seriesFor(r.pred), color: "#d64545", width: 2.2 });
+    series.push({ label: `predicción ${fmtLabel(r.pred)}`, points: seriesFor(r.pred), color: "#d64545", width: 2.2 });
   }
-  series.push({ label: `etiqueta ${r.label}`, points: seriesFor(r.label), color: "#2f6fed", width: 2.2 });
+  series.push({ label: `etiqueta ${fmtLabel(r.label)}`, points: seriesFor(r.label), color: "#2f6fed", width: 2.2 });
   drawChart($("chart-trace"), series, { yMin: 0, yMax: 1 });
   $("trace-legend").textContent =
     "Cada paso del deslizamiento en el eje x; probabilidad de cada dígito en el eje y. " +
@@ -964,7 +980,8 @@ async function refreshDatasetsTab() {
 
 function fillDigitSelects() {
   const opts = `<option value="">todas</option>` +
-    [...Array(10).keys()].map((d) => `<option value="${d}">${d}</option>`).join("");
+    [...Array(10).keys()].map((d) => `<option value="${d}">${d}</option>`).join("") +
+    `<option value="${EMPTY_LABEL}">∅ (nada)</option>`;
   $("filter-label").innerHTML = opts;
   $("filter-pred").innerHTML = opts;
 }

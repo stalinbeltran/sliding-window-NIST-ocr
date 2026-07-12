@@ -71,7 +71,8 @@ def test_catalog_integration_and_build(tmp_custom_store):
         data_registry.build_dataset("sub_windows", {"stride": 3}, train=True, seed=7)
 
     # el catálogo expone los params efectivos del base como defaults del custom
-    assert entry["defaults"] == BASE["params"]
+    # (incluidos los que el base no fijó, como empty_fraction, con su default)
+    assert entry["defaults"] == {"empty_fraction": 0.0, **BASE["params"]}
 
     # cambiar windows_per_image invalidaría los índices guardados → rechazado con razón
     with pytest.raises(ValueError, match="windows_per_image"):

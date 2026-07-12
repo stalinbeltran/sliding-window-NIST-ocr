@@ -3,9 +3,13 @@
 NNS = {
     "dimensionador": {
         "description": "CNN que extrae características de una ventana de la imagen. "
-                       "Se pre-entrena clasificando el dígito de origen de la ventana.",
+                       "Se pre-entrena clasificando el dígito de origen de la ventana; "
+                       "con dataset.params.empty_fraction > 0 aprende además la clase "
+                       "'no hay nada en este recuadro' (10).",
         "defaults": {
-            "dataset": {"name": "mnist_full", "params": {"window_size": 28, "windows_per_image": 1}},
+            "dataset": {"name": "mnist_full",
+                        "params": {"window_size": 28, "windows_per_image": 1,
+                                   "empty_fraction": 0.0}},
             "model": {"window_size": 28, "feature_dim": 32, "num_classes": 10, "channels": [16, 32]},
             "training": {
                 "epochs": 5, "batch_size": 128, "lr": 0.001, "weight_decay": 0.0,

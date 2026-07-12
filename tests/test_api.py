@@ -279,6 +279,73 @@ def test_api_secuenciador_eval_and_predict_use_training_stride(client):
     assert len(t["steps"]) == len(t["positions"]) == 9
 
 
+def test_api_empty_class_end_to_end(client):
+    """Clase 'no hay nada' (10): entrenar con empty_fraction fija num_classes=11,
+    la evaluación mide también los vacíos (matriz 11×11) y el secuenciador
+    consume las features de ese dimensionador sin cambios."""
+    c, manager = client
+
+    # 1) entrenar con ventanas vacías: el backend fija num_classes=11 en la config
+    cfg = dim_config("mnist_windows", {"window_size": 14, "windows_per_image": 2,
+                                       "empty_fraction": 0.3})
+    exp_id = _train(c, manager, cfg=cfg)
+    info = c.get(f"/api/experiments/{exp_id}").json()
+    assert info["config"]["model"]["num_classes"] == 11
+
+    # 2) evaluación con el mismo mix de vacíos: matriz 11×11 y etiquetas 10
+    r = c.post("/api/evaluations", json={
+        "experiment": exp_id, "split": "test", "limit": 100,
+        "dataset": {"name": "mnist_windows",
+                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
+    assert r.status_code == 200, r.json()
+    eval_id = r.json()["evaluation_id"]
+    _wait(manager, eval_id)
+    info = c.get(f"/api/evaluations/{eval_id}").json()
+    assert info["status"]["status"] == "completed", info["status"].get("error")
+    assert len(info["status"]["summary"]["confusion"]) == 11
+
+    # los vacíos existen y se pueden filtrar por etiqueta 10
+    r = c.get(f"/api/evaluations/{eval_id}/results", params={"label": 10, "limit": 5})
+    empty_rows = r.json()
+    assert empty_rows["total"] > 0
+    assert all(it["label"] == 10 for it in empty_rows["items"])
+
+    # 3) predict sobre una muestra vacía: probs de 11 clases
+    r = c.post("/api/predict", json={
+        "experiment": exp_id, "split": "test", "index": empty_rows["items"][0]["index"],
+        "dataset": {"name": "mnist_windows",
+                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
+    assert r.status_code == 200, r.json()
+    p = r.json()
+    assert p["label"] == 10 and len(p["probs"]) == 11
+
+    # 4) un modelo SIN la clase vacía no se puede evaluar con vacíos (400 con razón)
+    plain_id = _train(c, manager)  # dimensionador clásico de 10 clases
+    r = c.post("/api/evaluations", json={
+        "experiment": plain_id, "split": "test", "limit": 16,
+        "dataset": {"name": "mnist_windows",
+                    "params": {"window_size": 14, "empty_fraction": 0.3}}})
+    assert r.status_code == 400
+    assert "no hay nada" in r.json()["detail"]
+
+    # 5) re-entrenar un modelo de 10 clases con un dataset con vacíos → 400
+    cfg2 = dim_config("mnist_windows", {"window_size": 14, "empty_fraction": 0.3},
+                      **{"init_from": plain_id})
+    r = c.post("/api/train", json={"nn": "dimensionador", "config": cfg2})
+    assert r.status_code == 400
+    assert "no hay nada" in r.json()["detail"]
+
+    # 6) el secuenciador entrena sobre el dimensionador con clase vacía
+    seq_id = _train(c, manager, "secuenciador", seq_config(exp_id))
+    r = c.post("/api/predict", json={
+        "experiment": seq_id, "split": "test", "index": 0,
+        "dataset": {"name": "mnist_sliding_sequences", "params": {}}})
+    assert r.status_code == 200, r.json()
+    t = r.json()["trace"]
+    assert t["kind"] == "secuenciador" and len(t["steps"]) == 9
+    assert len(t["steps"][0]["probs"]) == 10  # la salida del secuenciador sigue siendo 0–9
+
+
 def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
     c, manager = client
     exp_id = _train(c, manager)

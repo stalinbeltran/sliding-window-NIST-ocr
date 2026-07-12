@@ -82,7 +82,10 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     eval_registry.update_status(eval_id, status="running", started_at=_now(),
                                 progress={"done": 0, "total": total})
     done, correct_total, stopped = 0, 0, False
-    confusion = [[0] * 10 for _ in range(10)]
+    # Tamaño de la matriz = clases del modelo (11 si tiene la clase 'no hay
+    # nada'); la validación garantiza que el dataset no produce etiquetas fuera.
+    num_classes = int(model.config.get("num_classes", 10))
+    confusion = [[0] * num_classes for _ in range(num_classes)]
     per_step_correct = None
 
     with torch.no_grad():

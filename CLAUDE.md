@@ -130,6 +130,23 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     `split`/`index`/`num_steps` para los datasets de trazo, porque el recorrido cambia
     con la muestra; el visualizador de la pestaña Datasets lo anima igual).
 
+22. **Clase "no hay nada en este recuadro"** (2026-07-12): los datasets de ventanas
+    (`mnist_full`/`mnist_windows` y sus customs) aceptan `empty_fraction` ∈ [0, 1):
+    esa fracción de las muestras es una ventana SIN píxeles activos (gris original ≤
+    `EMPTY_INK_THRESHOLD` = 0.05) etiquetada `EMPTY_LABEL` = 10, tomada de una región
+    vacía de la misma imagen (o fondo puro si no la hay); determinista dado (seed, idx)
+    y con `empty_fraction=0` las muestras antiguas se reproducen idénticas (no se
+    consume RNG extra). Con `empty_fraction > 0` el dimensionador necesita
+    `model.num_classes=11`: `validate_train_config` lo fija en la config (y el frontend
+    lo sincroniza en el JSON, `syncDimensionadorWindow`); `init_from` de un modelo de
+    10 clases → 400 con razón, igual que evaluar un modelo de 10 clases con un dataset
+    con vacíos. La pestaña Probar propaga el `empty_fraction` del entrenamiento a las
+    evaluaciones; la matriz de confusión se dimensiona con `num_classes` del modelo;
+    la UI muestra la clase 10 como "∅" (también en el filtro por etiqueta). Cambiar
+    `empty_fraction` en un dataset custom se rechaza (re-etiquetaría sus muestras).
+    El secuenciador no cambia: sigue clasificando 0–9, pero las features del
+    dimensionador ahora le comunican que la región observada está vacía.
+
 ## Arquitectura
 
 Dos redes neuronales:
@@ -140,7 +157,8 @@ Dos redes neuronales:
   imagen MNIST 28×28) y produce:
   - `features(x)` → vector de características (`feature_dim`), que es lo que consume el
     secuenciador;
-  - `forward(x)` → logits de clasificación (10 dígitos), usados para pre-entrenarlo.
+  - `forward(x)` → logits de clasificación (10 dígitos, o 11 con la clase "no hay
+    nada" de la regla 22), usados para pre-entrenarlo.
 - Usa pooling adaptativo, por lo que acepta ventanas de cualquier tamaño, pero **el
   tamaño de ventana con el que se entrenó queda en su config** y el secuenciador lo
   reutiliza obligatoriamente.

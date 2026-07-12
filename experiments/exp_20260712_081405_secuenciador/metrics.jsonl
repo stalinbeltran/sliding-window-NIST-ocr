@@ -1,0 +1,9 @@
+{"type": "batch", "epoch": 1, "step": 50, "loss": 1.23622, "acc": 0.66406}
+{"type": "batch", "epoch": 1, "step": 100, "loss": 0.68188, "acc": 0.875}
+{"type": "batch", "epoch": 1, "step": 150, "loss": 0.60169, "acc": 0.90625}
+{"type": "batch", "epoch": 1, "step": 200, "loss": 0.56307, "acc": 0.9375}
+{"type": "batch", "epoch": 1, "step": 250, "loss": 0.44293, "acc": 0.95312}
+{"type": "batch", "epoch": 1, "step": 300, "loss": 0.44094, "acc": 0.92188}
+{"type": "batch", "epoch": 1, "step": 350, "loss": 0.43968, "acc": 0.9375}
+{"type": "batch", "epoch": 1, "step": 400, "loss": 0.3935, "acc": 0.92969}
+{"type": "epoch", "epoch": 1, "train_loss": 0.68593, "train_acc": 0.86444, "val_loss": 0.40485, "val_acc": 0.94533, "val_per_step_acc": [0.57, 0.779, 0.84533, 0.90867, 0.93383, 0.94083, 0.94533, 0.94833, 0.94533], "seconds": 70.18}

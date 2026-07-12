@@ -12,17 +12,21 @@ from .datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
 DATASETS = {
     "mnist_full": {
         "description": "Imágenes MNIST completas 28×28; con window_size < 28 entrena "
-                       "con ventanas aleatorias de cada imagen (windows_per_image por imagen).",
+                       "con ventanas aleatorias de cada imagen (windows_per_image por imagen). "
+                       "Con empty_fraction > 0 esa fracción son ventanas vacías con la "
+                       "clase extra 'no hay nada' (10).",
         "compatible_with": ["dimensionador"],
         "builder": MnistFull,
-        "defaults": {"window_size": 28, "windows_per_image": 1},
+        "defaults": {"window_size": 28, "windows_per_image": 1, "empty_fraction": 0.0},
         "full_image": True,   # la muestra visible es una imagen completa 28×28
     },
     "mnist_windows": {
-        "description": "Ventanas aleatorias de MNIST etiquetadas con el dígito de origen.",
+        "description": "Ventanas aleatorias de MNIST etiquetadas con el dígito de origen; "
+                       "con empty_fraction > 0 esa fracción son ventanas vacías con la "
+                       "clase extra 'no hay nada' (10).",
         "compatible_with": ["dimensionador"],
         "builder": MnistWindows,
-        "defaults": {"window_size": 14, "windows_per_image": 4},
+        "defaults": {"window_size": 14, "windows_per_image": 4, "empty_fraction": 0.0},
         "full_image": False,
     },
     "mnist_sliding_sequences": {
@@ -123,13 +127,22 @@ def validate_dataset_params(name: str, params: dict) -> None:
         raise ValueError(
             f"num_steps debe ser un entero ≥ 2 (con un solo paso no hay secuencia "
             f"que recorrer); recibido: {ns!r}.")
-    if name not in DATASETS and "windows_per_image" in params and \
-            params["windows_per_image"] != base_params.get("windows_per_image"):
+    ef = params.get("empty_fraction")
+    if ef is not None and (isinstance(ef, bool) or not isinstance(ef, (int, float))
+                           or not 0 <= ef < 1):
         raise ValueError(
-            f"No se puede cambiar windows_per_image en el dataset custom {name!r}: "
-            f"sus índices se guardaron con windows_per_image="
-            f"{base_params.get('windows_per_image')} y dejarían de apuntar a las "
-            f"mismas muestras. Crea un subconjunto nuevo si necesitas otro valor.")
+            f"empty_fraction debe ser un número en [0, 1): la fracción de muestras "
+            f"que son ventanas vacías con la clase 'no hay nada' (con 1 no quedaría "
+            f"ningún dígito que aprender); recibido: {ef!r}.")
+    if name not in DATASETS:
+        for key in ("windows_per_image", "empty_fraction"):
+            if key in params and params[key] != base_params.get(key):
+                raise ValueError(
+                    f"No se puede cambiar {key} en el dataset custom {name!r}: sus "
+                    f"índices se guardaron con {key}={base_params.get(key)} y dejarían "
+                    f"de apuntar a las mismas muestras (con otro empty_fraction hasta "
+                    f"la etiqueta de una muestra cambiaría). Crea un subconjunto nuevo "
+                    f"si necesitas otro valor.")
 
 
 def effective_params(name: str, params: dict) -> dict:

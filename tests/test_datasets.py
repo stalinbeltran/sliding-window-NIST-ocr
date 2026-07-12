@@ -3,9 +3,11 @@
 import pytest
 import torch
 
-from swnist.data.datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
+from swnist.data.datasets import (EMPTY_INK_THRESHOLD, EMPTY_LABEL, IMAGE_SIZE,
+                                  MnistContourSequences, MnistFull,
                                   MnistSlidingSequences, MnistWindows)
-from swnist.data.registry import build_dataset, effective_window_size, list_datasets
+from swnist.data.registry import (build_dataset, effective_window_size,
+                                  list_datasets, validate_dataset_params)
 from swnist.data.trajectory import (contour_positions, ink_mask, order_path,
                                     resample_path, skeletonize)
 from swnist.data.windows import extract_window, grid_positions, normalize_position
@@ -66,6 +68,75 @@ def test_mnist_windows_item_and_determinism():
     ds3 = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=8)
     w3, _ = ds3[10]
     assert not torch.equal(w1, w3)  # otra semilla, otra ventana
+
+
+def test_empty_fraction_generates_empty_windows():
+    """empty_fraction > 0: esa fracción son ventanas SIN píxeles activos con la
+    clase 'no hay nada' (EMPTY_LABEL), deterministas dado (seed, idx)."""
+    ds = MnistWindows(train=True, window_size=14, windows_per_image=2, seed=7,
+                      empty_fraction=0.5)
+    n = 200
+    labels = [ds.display_item(i)[1] for i in range(n)]
+    empties = [i for i in range(n) if labels[i] == EMPTY_LABEL]
+    assert 0.3 < len(empties) / n < 0.7  # ~la fracción pedida
+    for i in empties[:20]:
+        w, label = ds[i]
+        assert label == EMPTY_LABEL and w.shape == (1, 14, 14)
+        raw = w * 0.3081 + 0.1307  # de-normalizar al gris original
+        assert (raw <= EMPTY_INK_THRESHOLD + 1e-6).all()  # sin píxeles activos
+    # las demás muestras conservan su dígito
+    digit_idx = next(i for i in range(n) if labels[i] != EMPTY_LABEL)
+    assert 0 <= ds[digit_idx][1] <= 9
+    # determinista: mismas ventanas y etiquetas en otra instancia
+    ds2 = MnistWindows(train=True, window_size=14, windows_per_image=2, seed=7,
+                       empty_fraction=0.5)
+    for i in (empties[0], digit_idx):
+        w1, l1 = ds[i]
+        w2, l2 = ds2[i]
+        assert torch.equal(w1, w2) and l1 == l2
+
+
+def test_empty_fraction_zero_keeps_old_samples():
+    """empty_fraction=0 (default) reproduce exactamente las muestras de las
+    configs previas a la clase 'no hay nada' (no consume RNG extra)."""
+    old = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7)
+    new = MnistWindows(train=True, window_size=14, windows_per_image=4, seed=7,
+                       empty_fraction=0.0)
+    for i in (0, 10, 99):
+        assert torch.equal(old[i][0], new[i][0]) and old[i][1] == new[i][1]
+
+
+def test_empty_fraction_full_window_is_blank():
+    # Con ventana 28 no hay región que muestrear: la muestra vacía es fondo puro.
+    ds = MnistFull(train=True, seed=3, empty_fraction=0.9)
+    i = next(i for i in range(20) if ds.display_item(i)[1] == EMPTY_LABEL)
+    w, label = ds[i]
+    assert label == EMPTY_LABEL and w.shape == (1, 28, 28)
+    assert ((w * 0.3081 + 0.1307).abs() <= EMPTY_INK_THRESHOLD).all()
+
+
+def test_empty_fraction_param_validation():
+    with pytest.raises(ValueError, match="empty_fraction debe ser"):
+        build_dataset("mnist_windows", {"empty_fraction": 1.0}, train=True, seed=0)
+    with pytest.raises(ValueError, match="empty_fraction debe ser"):
+        build_dataset("mnist_full", {"empty_fraction": -0.1}, train=True, seed=0)
+    with pytest.raises(ValueError, match="Parámetros no válidos"):
+        build_dataset("mnist_sliding_sequences", {"empty_fraction": 0.3},
+                      train=True, seed=0)
+    validate_dataset_params("mnist_windows", {"empty_fraction": 0.3})  # válido
+
+
+def test_custom_dataset_rejects_empty_fraction_change(tmp_custom_store):
+    """Cambiar empty_fraction en un custom re-etiquetaría sus muestras → 400."""
+    tmp_custom_store.create(
+        {"name": "mnist_windows",
+         "params": {"window_size": 14, "empty_fraction": 0.3},
+         "split": "test", "seed": 42},
+        [0, 1, 2], "con_vacios")
+    validate_dataset_params("con_vacios", {"empty_fraction": 0.3})  # igual al base: ok
+    validate_dataset_params("con_vacios", {"window_size": 10})      # ventana sí se puede
+    with pytest.raises(ValueError, match="empty_fraction"):
+        validate_dataset_params("con_vacios", {"empty_fraction": 0.5})
 
 
 def test_mnist_sliding_sequences_item():

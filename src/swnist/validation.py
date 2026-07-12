@@ -7,7 +7,7 @@ experimento fallido.
 """
 
 from swnist.data import registry as data_registry
-from swnist.data.datasets import IMAGE_SIZE
+from swnist.data.datasets import EMPTY_LABEL, IMAGE_SIZE
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.nn_registry import NNS
 
@@ -53,6 +53,12 @@ def _model_window(config: dict) -> int | None:
 # Parámetros que definen la trayectoria de un dataset de secuencias: stride en
 # el recorrido raster, num_steps en el recorrido por el trazo (contour).
 TRAJECTORY_KEYS = ("stride", "num_steps")
+
+
+def dataset_has_empty_class(name: str, params: dict) -> bool:
+    """True si el dataset produce muestras con la clase 'no hay nada' (EMPTY_LABEL)."""
+    eff = data_registry.effective_params(name, params or {})
+    return float(eff.get("empty_fraction") or 0.0) > 0.0
 
 
 def sequence_effective_params(exp_config: dict, registry: ExperimentRegistry) -> dict:
@@ -123,6 +129,24 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
                 f"elige un dataset con ese tamaño de ventana. (El secuenciador "
                 f"reutiliza el window_size del dimensionador, por eso debe "
                 f"reflejar lo realmente entrenado.)")
+        # Clase 'no hay nada' (EMPTY_LABEL): si el dataset produce ventanas
+        # vacías, el modelo necesita la salida extra. Se fija en la config (el
+        # frontend la sincroniza también) para que quede registrado el valor
+        # efectivo; con init_from la arquitectura es del origen y no se toca.
+        if dataset_has_empty_class(dataset_cfg["name"], dataset_cfg.get("params")):
+            model_cfg = dict(config.get("model") or {})
+            num_classes = int(model_cfg.get("num_classes", 10))
+            if num_classes < EMPTY_LABEL + 1:
+                if init_from:
+                    raise ValueError(
+                        f"Re-entrenamiento incompatible: {init_from!r} se entrenó "
+                        f"con {num_classes} clases (sin la clase 'no hay nada'), "
+                        f"pero el dataset produce ventanas vacías con etiqueta "
+                        f"{EMPTY_LABEL} (empty_fraction > 0). Entrena un "
+                        f"dimensionador nuevo con este dataset o re-entrena con "
+                        f"empty_fraction=0.")
+                model_cfg["num_classes"] = EMPTY_LABEL + 1
+                config["model"] = model_cfg
 
     if nn == "secuenciador":
         dim_id = config.get("dimensionador_experiment")
@@ -195,6 +219,15 @@ def validate_eval_config(config: dict, registry: ExperimentRegistry) -> dict:
                 f"produce entradas de {ws_data}×{ws_data}. Evalúalo con un dataset "
                 f"de ventana {ws_model} (p. ej. mnist_windows con "
                 f"window_size={ws_model}).")
+        num_classes = int(exp["config"]["model"].get("num_classes", 10))
+        if num_classes < EMPTY_LABEL + 1 and dataset_has_empty_class(
+                dataset_cfg["name"], dataset_cfg.get("params")):
+            raise ValueError(
+                f"El experimento {exp_id!r} se entrenó con {num_classes} clases "
+                f"(sin la clase 'no hay nada'), pero el dataset produce ventanas "
+                f"vacías con etiqueta {EMPTY_LABEL} (empty_fraction > 0) que ese "
+                f"modelo nunca podría acertar. Evalúalo con empty_fraction=0 o "
+                f"entrena un dimensionador con ventanas vacías.")
 
     if nn == "secuenciador":
         dim_id = exp["config"].get("dimensionador_experiment")

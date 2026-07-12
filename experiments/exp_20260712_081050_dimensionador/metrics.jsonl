@@ -1,0 +1,17 @@
+{"type": "batch", "epoch": 1, "step": 50, "loss": 1.7192, "acc": 0.4375}
+{"type": "batch", "epoch": 1, "step": 100, "loss": 1.59269, "acc": 0.42969}
+{"type": "batch", "epoch": 1, "step": 150, "loss": 1.52966, "acc": 0.375}
+{"type": "batch", "epoch": 1, "step": 200, "loss": 1.46195, "acc": 0.47656}
+{"type": "batch", "epoch": 1, "step": 250, "loss": 1.37983, "acc": 0.55469}
+{"type": "batch", "epoch": 1, "step": 300, "loss": 1.342, "acc": 0.52344}
+{"type": "batch", "epoch": 1, "step": 350, "loss": 1.37257, "acc": 0.50781}
+{"type": "batch", "epoch": 1, "step": 400, "loss": 1.24185, "acc": 0.5625}
+{"type": "batch", "epoch": 1, "step": 450, "loss": 1.23305, "acc": 0.58594}
+{"type": "batch", "epoch": 1, "step": 500, "loss": 1.07676, "acc": 0.60156}
+{"type": "batch", "epoch": 1, "step": 550, "loss": 1.24153, "acc": 0.53125}
+{"type": "batch", "epoch": 1, "step": 600, "loss": 1.18972, "acc": 0.61719}
+{"type": "batch", "epoch": 1, "step": 650, "loss": 1.11087, "acc": 0.64062}
+{"type": "batch", "epoch": 1, "step": 700, "loss": 0.9667, "acc": 0.625}
+{"type": "batch", "epoch": 1, "step": 750, "loss": 1.26158, "acc": 0.61719}
+{"type": "batch", "epoch": 1, "step": 800, "loss": 0.96665, "acc": 0.67969}
+{"type": "epoch", "epoch": 1, "train_loss": 1.28617, "train_acc": 0.55477, "val_loss": 1.00893, "val_acc": 0.64942, "seconds": 61.21}
