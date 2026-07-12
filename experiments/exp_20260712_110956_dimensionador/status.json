@@ -1,0 +1,13 @@
+{
+  "status": "running",
+  "created_at": "2026-07-12T16:09:56.790890+00:00",
+  "started_at": "2026-07-12T16:09:57.101861+00:00",
+  "finished_at": null,
+  "best": {
+    "epoch": 2,
+    "val_acc": 0.15471,
+    "val_loss": 2.30683
+  },
+  "final_test": null,
+  "error": null
+}
