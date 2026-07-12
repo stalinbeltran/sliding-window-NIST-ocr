@@ -95,6 +95,20 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     cambiar `windows_per_image` en un custom se rechaza (400) porque invalidaría
     los índices guardados.
 
+20. **Stride del secuenciador fijado de extremo a extremo** (2026-07-11): la trayectoria
+    (posiciones (x, y) por paso) es ENTRADA de la red, así que el stride efectivo queda
+    registrado en la config al entrenar (`validate_train_config`) y las evaluaciones y
+    el predict la reutilizan obligatoriamente
+    (`swnist.validation.sequence_effective_params`; evaluar con otro stride → 400 con
+    razón; runner y predict lo fijan también por defensa, y la config de la evaluación
+    guarda los valores efectivos). Bug original: secuenciador entrenado con stride 5
+    (36 pasos) evaluado con el stride 7 de los defaults del formulario (25 pasos) caía
+    de acc 0.91 a 0.56. `GET /api/datasets/<name>/slide` devuelve el recorrido
+    (posiciones, pasos, notas de solape/huecos) y la pestaña Datasets tiene un
+    visualizador que anima ventana+stride (editables, solo visualización) sobre el mapa
+    de píxeles de una muestra; el trace de predict incluye el stride efectivo. Los
+    datasets de ventanas aleatorias (mnist_full/mnist_windows) no tienen stride propio.
+
 ## Arquitectura
 
 Dos redes neuronales:

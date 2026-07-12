@@ -191,6 +191,81 @@ def test_api_samples_and_predict(client):
     assert len(t["steps"][0]["probs"]) == 10
 
 
+def test_api_dataset_slide(client):
+    """GET /slide expone el recorrido real de la ventana para verificar el stride."""
+    c, _ = client
+    r = c.get("/api/datasets/mnist_sliding_sequences/slide")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["window_size"] == 14 and b["stride"] == 7
+    assert b["dataset_uses_stride"] and b["steps"] == 9
+    assert b["positions"][0] == [0, 0] and b["axis_coords"] == [0, 7, 14]
+
+    # overrides de visualización: ventana 5, stride 5 → 36 pasos (con borde 23)
+    b = c.get("/api/datasets/mnist_sliding_sequences/slide",
+              params={"window_size": 5, "stride": 5}).json()
+    assert b["steps"] == 36 and b["axis_coords"] == [0, 5, 10, 15, 20, 23]
+
+    # stride > ventana deja franjas sin ver → se avisa (el caso del bug: 25 pasos)
+    b = c.get("/api/datasets/mnist_sliding_sequences/slide",
+              params={"window_size": 5, "stride": 7}).json()
+    assert b["steps"] == 25 and "franjas" in b["note"]
+
+    # dataset sin stride propio (ventanas aleatorias) lo dice claramente
+    b = c.get("/api/datasets/mnist_full/slide").json()
+    assert not b["dataset_uses_stride"] and "aleatorias" in b["note"]
+    assert b["steps"] == 1  # ventana 28 = imagen completa
+
+    assert c.get("/api/datasets/mnist_sliding_sequences/slide",
+                 params={"stride": 0}).status_code == 400
+    assert c.get("/api/datasets/mnist_sliding_sequences/slide",
+                 params={"window_size": 99}).status_code == 400
+    assert c.get("/api/datasets/no_existe/slide").status_code == 400
+
+
+def test_api_secuenciador_eval_and_predict_use_training_stride(client):
+    """Bug del 2026-07-11: entrenar con un stride y evaluar/predecir con otro
+    cambiaba la trayectoria (entrada de la red) y hundía la accuracy. Ahora la
+    evaluación fija los params efectivos del entrenamiento (400 si se pide otro
+    stride) y el predict desliza siempre con la trayectoria real."""
+    c, manager = client
+    dim_id = _train(c, manager)  # dimensionador de ventana 14
+    seq_id = _train(c, manager, "secuenciador", seq_config(dim_id))  # stride 7
+
+    # la config del secuenciador registra la trayectoria efectiva
+    seq_cfg = c.get(f"/api/experiments/{seq_id}").json()["config"]
+    assert seq_cfg["dataset"]["params"] == {"stride": 7, "window_size": 14}
+
+    # evaluar con otro stride → 400 con la razón
+    r = c.post("/api/evaluations", json={
+        "experiment": seq_id, "split": "test", "limit": 16,
+        "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 4}}})
+    assert r.status_code == 400
+    assert "stride=7" in r.json()["detail"]
+
+    # sin params → se fijan los efectivos y quedan registrados en la config
+    r = c.post("/api/evaluations", json={
+        "experiment": seq_id, "split": "test", "limit": 16,
+        "dataset": {"name": "mnist_sliding_sequences", "params": {}}})
+    assert r.status_code == 200, r.json()
+    eval_id = r.json()["evaluation_id"]
+    _wait(manager, eval_id)
+    info = c.get(f"/api/evaluations/{eval_id}").json()
+    assert info["status"]["status"] == "completed", info["status"].get("error")
+    assert info["config"]["dataset"]["params"] == {"window_size": 14, "stride": 7}
+    # trayectoria de entrenamiento: ventana 14, stride 7 → 9 pasos
+    assert len(info["status"]["summary"]["per_step_acc"]) == 9
+
+    # el predict ignora un stride engañoso y usa el del entrenamiento
+    r = c.post("/api/predict", json={
+        "experiment": seq_id, "split": "test", "index": 0,
+        "dataset": {"name": "mnist_sliding_sequences", "params": {"stride": 4}}})
+    assert r.status_code == 200, r.json()
+    t = r.json()["trace"]
+    assert t["kind"] == "secuenciador" and t["stride"] == 7
+    assert len(t["steps"]) == len(t["positions"]) == 9
+
+
 def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
     c, manager = client
     exp_id = _train(c, manager)

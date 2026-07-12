@@ -20,10 +20,13 @@ from pydantic import BaseModel
 
 from swnist.data import registry as data_registry
 from swnist.data.custom import slugify
+from swnist.data.datasets import IMAGE_SIZE
 from swnist.data.registry import list_datasets
+from swnist.data.windows import grid_positions
 from swnist.evaluation.registry import EvaluationRegistry
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.nn_registry import list_nns
+from swnist.validation import sequence_effective_params
 from . import inference
 from .manager import TrainingManager
 
@@ -105,6 +108,49 @@ def api_nns():
 @app.get("/api/datasets")
 def api_datasets(nn: str | None = None):
     return list_datasets(nn)
+
+
+@app.get("/api/datasets/{name}/slide")
+def api_dataset_slide(name: str, window_size: int | None = None,
+                      stride: int | None = None):
+    """Recorrido de la ventana deslizante de un dataset, para visualizarlo y
+    verificar el stride sin tener que lanzar una prueba. window_size/stride
+    sobrescriben los efectivos del dataset (solo para la visualización)."""
+    info = _400(data_registry.dataset_info, name)
+    eff = _400(data_registry.effective_params, name, {})
+    uses_stride = "stride" in eff
+    ws = int(window_size) if window_size is not None else int(eff.get("window_size", IMAGE_SIZE))
+    st = int(stride) if stride is not None else int(eff.get("stride", 7))
+    if not 1 <= ws <= IMAGE_SIZE:
+        raise HTTPException(400, f"window_size debe estar entre 1 y {IMAGE_SIZE}; "
+                                 f"recibido: {ws}.")
+    if st < 1:
+        raise HTTPException(400, f"stride debe ser ≥ 1; recibido: {st}.")
+    positions = grid_positions(IMAGE_SIZE, ws, st) if ws < IMAGE_SIZE else [(0, 0)]
+    axis = sorted({p[0] for p in positions})
+    notes = []
+    if not uses_stride:
+        notes.append("Este dataset no desliza una ventana: muestrea ventanas "
+                     "aleatorias por imagen (windows_per_image), así que no tiene "
+                     "stride propio. El recorrido mostrado es el raster hipotético "
+                     "que usa, p. ej., el trace del dimensionador en Probar.")
+    if ws >= IMAGE_SIZE:
+        notes.append("La ventana cubre toda la imagen: el recorrido colapsa a 1 paso.")
+    elif st > ws:
+        notes.append(f"stride ({st}) > ventana ({ws}): quedan franjas de hasta "
+                     f"{st - ws} px sin ver entre posiciones consecutivas (solo el "
+                     f"borde final se cubre siempre).")
+    elif st < ws:
+        notes.append(f"Ventanas solapadas: {ws - st} px de solape entre posiciones "
+                     f"consecutivas.")
+    return {
+        "name": name, "image_size": IMAGE_SIZE, "window_size": ws, "stride": st,
+        "dataset_uses_stride": uses_stride, "effective_defaults": eff,
+        "full_image": info.get("full_image", True),
+        "steps": len(positions), "axis_coords": axis,
+        "positions": [list(p) for p in positions],
+        "note": " ".join(notes),
+    }
 
 
 @app.get("/api/datasets/{name}/samples")
@@ -242,15 +288,16 @@ def api_eval_results(eval_id: str, result: str = "all", ambiguity: float = 0.2,
 
 
 def _eval_ds_params(cfg: dict) -> dict:
-    """Params efectivos del dataset de una evaluación (ventana del secuenciador
-    incluida) — para que las miniaturas y el predict apunten a la misma muestra."""
+    """Params efectivos del dataset de una evaluación (ventana Y stride del
+    entrenamiento del secuenciador) — para que las miniaturas y el predict
+    apunten a la misma muestra. Las evaluaciones nuevas ya guardan estos valores
+    en su config; esto corrige también las antiguas."""
     ds_params = dict(cfg["dataset"].get("params") or {})
     try:
         exp = registry.get_experiment(cfg["experiment"])
         if exp["config"].get("nn") == "secuenciador":
-            dim = registry.get_experiment(exp["config"]["dimensionador_experiment"])
-            ds_params["window_size"] = dim["config"]["model"]["window_size"]
-    except FileNotFoundError:
+            ds_params.update(sequence_effective_params(exp["config"], registry))
+    except (FileNotFoundError, ValueError, KeyError):
         pass
     return ds_params
 

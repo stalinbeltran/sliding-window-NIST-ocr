@@ -117,14 +117,21 @@ def validate_dataset_params(name: str, params: dict) -> None:
             f"mismas muestras. Crea un subconjunto nuevo si necesitas otro valor.")
 
 
+def effective_params(name: str, params: dict) -> dict:
+    """Params con los que realmente se construirá el dataset (defaults ⊕ base custom ⊕ params).
+
+    Es la única fuente de verdad para window_size/stride efectivos: todo chequeo
+    de compatibilidad debe mirar esto y no los params crudos de una config.
+    """
+    if name in DATASETS:
+        return {**DATASETS[name]["defaults"], **params}
+    d = custom_store.get(name)  # KeyError si no existe
+    return {**DATASETS[d["base"]["name"]]["defaults"], **d["base"]["params"], **params}
+
+
 def effective_window_size(name: str, params: dict) -> int:
     """Lado de la entrada 2D que producirá este dataset (para chequear compatibilidad)."""
-    if name in DATASETS:
-        merged = {**DATASETS[name]["defaults"], **params}
-    else:
-        d = custom_store.get(name)
-        merged = {**DATASETS[d["base"]["name"]]["defaults"], **d["base"]["params"], **params}
-    return int(merged.get("window_size", IMAGE_SIZE))
+    return int(effective_params(name, params).get("window_size", IMAGE_SIZE))
 
 
 def build_dataset(name: str, params: dict, train: bool, seed: int):

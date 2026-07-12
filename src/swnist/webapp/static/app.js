@@ -175,7 +175,17 @@ function onInitFromChange() {
     if (initId) {
       const exp = TRAIN_EXPS.find((e) => e.id === initId);
       config.init_from = initId;
-      if (exp) config.model = JSON.parse(JSON.stringify(exp.config.model));
+      if (exp) {
+        config.model = JSON.parse(JSON.stringify(exp.config.model));
+        // Secuenciador: por defecto se continúa con la misma trayectoria (mismo
+        // stride) que el experimento origen; editable en la config si se quiere
+        // re-entrenar con otra.
+        const origStride = exp.config.dataset?.params?.stride;
+        if ($("nn-select").value === "secuenciador" && origStride !== undefined &&
+            config.dataset?.params) {
+          config.dataset.params.stride = origStride;
+        }
+      }
     } else {
       delete config.init_from;
     }
@@ -342,15 +352,25 @@ async function onTestExpChange() {
 }
 
 function testDatasetParams() {
-  // Params efectivos: defaults del dataset + ventana del experimento (la CNN se
-  // evalúa con el tamaño de ventana con el que se entrenó; el secuenciador la
-  // impone en el servidor).
+  // Params efectivos: defaults del dataset + los del entrenamiento del
+  // experimento. La CNN se evalúa con la ventana con la que se entrenó; el
+  // secuenciador además con su stride (la trayectoria es entrada de la red:
+  // el servidor rechaza con 400 cualquier otro valor).
   const exp = testExp();
   const ds = TEST_DS.find((d) => d.name === $("test-dataset-select").value);
   if (!ds) return {};
   const params = JSON.parse(JSON.stringify(ds.defaults));
   if (exp && exp.config.nn === "dimensionador" && "window_size" in params) {
     params.window_size = exp.config.model.window_size;
+  }
+  if (exp && exp.config.nn === "secuenciador") {
+    const tp = exp.config.dataset?.params || {};
+    // Si el experimento (antiguo) no registró el valor, se omite y el servidor
+    // fija el efectivo del entrenamiento en la config de la evaluación.
+    if (tp.window_size !== undefined) params.window_size = tp.window_size;
+    else delete params.window_size;
+    if (tp.stride !== undefined) params.stride = tp.stride;
+    else delete params.stride;
   }
   return params;
 }
@@ -407,7 +427,9 @@ async function refreshEvals() {
     tr.innerHTML = `
       <td>${ev.id}</td>
       <td class="hint">${ev.config.experiment}</td>
-      <td class="hint">${ev.config.dataset.name} (${ev.config.split}${ev.config.limit ? ", n≤" + ev.config.limit : ""})</td>
+      <td class="hint">${ev.config.dataset.name} (${ev.config.split}${ev.config.limit ? ", n≤" + ev.config.limit : ""})${
+        ev.config.dataset.params?.window_size !== undefined ? `<br>ventana ${ev.config.dataset.params.window_size}` : ""}${
+        ev.config.dataset.params?.stride !== undefined ? ` · stride ${ev.config.dataset.params.stride}` : ""}</td>
       <td class="status-${st}">${st}${ev.running ? ` ⏳ ${prog ? prog.done + "/" + prog.total : ""}` : ""}</td>
       <td>${acc ?? "—"}</td>
       <td>
@@ -622,7 +644,8 @@ function renderSampleStep() {
       ctx.strokeRect(left * scale, top * scale, t.window_size * scale, t.window_size * scale);
     }
     $("anim-step").textContent =
-      `paso ${animIdx + 1}/${t.steps.length} · salida: ${stepPred}`;
+      `paso ${animIdx + 1}/${t.steps.length} · ventana ${t.window_size}` +
+      (t.stride ? ` · stride ${t.stride}` : "") + ` · salida: ${stepPred}`;
   }
   renderProbBars(probs, r.label, r.pred);
 }
@@ -695,7 +718,144 @@ $("anim-next").addEventListener("click", () => {
 // PESTAÑA DATASETS
 // ============================================================
 
+// ---------- visualizador de deslizamiento (window_size / stride) ----------
+
+let SLIDE_DS = [];   // catálogo completo de datasets (para el visualizador)
+let SLIDE = null;    // respuesta de /slide + imagen de fondo cargada
+let slideIdx = 0, slideTimer = null;
+
+const loadPng = (b64) => new Promise((res) => {
+  const img = new Image();
+  img.onload = () => res(img);
+  img.src = "data:image/png;base64," + b64;
+});
+
+async function initSlidePanel() {
+  SLIDE_DS = await api("/api/datasets");
+  const sel = $("slide-dataset");
+  const prev = sel.value;
+  sel.innerHTML = SLIDE_DS.map((d) =>
+    `<option value="${d.name}">${d.name}${d.custom ? " (custom)" : ""}</option>`).join("");
+  if (prev && SLIDE_DS.some((d) => d.name === prev)) { sel.value = prev; return; }
+  onSlideDatasetChange();
+}
+
+function onSlideDatasetChange() {
+  const ds = SLIDE_DS.find((d) => d.name === $("slide-dataset").value);
+  if (!ds) return;
+  $("slide-ws").value = ds.defaults.window_size ?? 28;
+  $("slide-stride").value = ds.defaults.stride ?? 7;
+  refreshSlide();
+}
+
+async function refreshSlide() {
+  stopSlide();
+  const name = $("slide-dataset").value;
+  const info = $("slide-info");
+  if (!name) return;
+  try {
+    const q = new URLSearchParams();
+    if ($("slide-ws").value) q.set("window_size", $("slide-ws").value);
+    if ($("slide-stride").value) q.set("stride", $("slide-stride").value);
+    const r = await api(`/api/datasets/${name}/slide?` + q);
+    let imgEl = null;
+    if (r.full_image) {
+      // muestra real del dataset como fondo (mapa de píxeles encima)
+      const idx = Math.max(0, parseInt($("slide-index").value, 10) || 0);
+      const sq = new URLSearchParams({ split: $("slide-split").value, offset: idx,
+                                       limit: 1, params: "{}" });
+      const s = await api(`/api/datasets/${name}/samples?` + sq);
+      if (s.items.length) imgEl = await loadPng(s.items[0].png);
+    }
+    SLIDE = { ...r, imgEl };
+    slideIdx = 0;
+    const perAxis = r.axis_coords.length;
+    info.innerHTML =
+      `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
+      `${r.window_size}×${r.window_size}, stride ${r.stride}` +
+      `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
+      `<br>stride propio del dataset: ${r.dataset_uses_stride
+        ? (r.effective_defaults.stride ?? "—") : "no tiene (ventanas aleatorias)"}` +
+      (r.note ? `<br><br>${r.note}` : "");
+    renderSlideStep();
+    startSlide();
+  } catch (e) {
+    SLIDE = null;
+    info.textContent = "Error: " + e.message;
+    $("slide-step").textContent = "";
+  }
+}
+
+function renderSlideStep() {
+  if (!SLIDE) return;
+  const canvas = $("slide-canvas");
+  const ctx = canvas.getContext("2d");
+  const n = SLIDE.image_size;
+  const scale = canvas.width / n;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (SLIDE.imgEl) ctx.drawImage(SLIDE.imgEl, 0, 0, canvas.width, canvas.height);
+  else { ctx.fillStyle = "#f3f5f9"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+
+  // mapa de píxeles (grilla 28×28)
+  ctx.strokeStyle = "rgba(120,130,150,.35)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= n; i++) {
+    ctx.beginPath(); ctx.moveTo(i * scale + .5, 0); ctx.lineTo(i * scale + .5, canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * scale + .5); ctx.lineTo(canvas.width, i * scale + .5); ctx.stroke();
+  }
+
+  const ws = SLIDE.window_size;
+  // rastro: posiciones ya visitadas
+  ctx.fillStyle = "rgba(47,111,237,.12)";
+  for (let j = 0; j < slideIdx; j++) {
+    const [t, l] = SLIDE.positions[j];
+    ctx.fillRect(l * scale, t * scale, ws * scale, ws * scale);
+  }
+  // ventana actual
+  const [top, left] = SLIDE.positions[slideIdx];
+  ctx.strokeStyle = "#2f6fed";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(left * scale, top * scale, ws * scale, ws * scale);
+
+  $("slide-step").textContent =
+    `paso ${slideIdx + 1}/${SLIDE.steps} · esquina (fila, col) = (${top}, ${left})`;
+}
+
+function startSlide() {
+  stopSlide();
+  if (!SLIDE || SLIDE.steps < 2) { if (SLIDE) renderSlideStep(); return; }
+  slideIdx = 0;
+  renderSlideStep();
+  $("slide-play").textContent = "⏸ Pausar";
+  slideTimer = setInterval(() => {
+    slideIdx += 1;
+    if (slideIdx >= SLIDE.steps) { stopSlide(); slideIdx = SLIDE.steps - 1; }
+    renderSlideStep();
+  }, 350);
+}
+
+function stopSlide() {
+  if (slideTimer) clearInterval(slideTimer);
+  slideTimer = null;
+  $("slide-play").textContent = "▶ Reproducir";
+}
+
+$("slide-dataset").addEventListener("change", onSlideDatasetChange);
+["slide-ws", "slide-stride", "slide-split", "slide-index"].forEach((id) =>
+  $(id).addEventListener("change", refreshSlide));
+$("slide-play").addEventListener("click", () => (slideTimer ? stopSlide() : startSlide()));
+$("slide-prev").addEventListener("click", () => {
+  stopSlide();
+  if (SLIDE) { slideIdx = Math.max(0, slideIdx - 1); renderSlideStep(); }
+});
+$("slide-next").addEventListener("click", () => {
+  stopSlide();
+  if (SLIDE) { slideIdx = Math.min(SLIDE.steps - 1, slideIdx + 1); renderSlideStep(); }
+});
+
 async function refreshDatasetsTab() {
+  await initSlidePanel();
   const all = await api("/api/datasets");
   const builtin = all.filter((d) => !d.custom);
   const tbodyB = $("builtin-ds-table").querySelector("tbody");

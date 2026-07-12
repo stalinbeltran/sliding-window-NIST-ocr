@@ -101,6 +101,48 @@ def test_secuenciador_config_records_effective_window(tmp_registry):
     assert final["dataset"]["params"]["window_size"] == 14
 
 
+def _fake_trained(registry, nn, cfg):
+    """Crea un experimento con checkpoint vacío (la validación solo mira existencia)."""
+    exp_id = registry.create_experiment(nn, cfg)
+    ckpt = registry.checkpoints_dir(exp_id) / "best.pt"
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    ckpt.touch()
+    return exp_id
+
+
+def test_secuenciador_config_records_effective_stride(tmp_registry):
+    """Si el formulario omite el stride, queda registrado el efectivo (default del
+    dataset): la trayectoria completa debe poder leerse de la config."""
+    from swnist.validation import validate_train_config
+
+    dim_id = _fake_trained(tmp_registry, "dimensionador",
+                           dim_config("mnist_windows", {"window_size": 14}))
+    cfg = seq_config(dim_id)
+    del cfg["dataset"]["params"]["stride"]
+    final = validate_train_config("secuenciador", cfg, tmp_registry)
+    assert final["dataset"]["params"] == {"window_size": 14, "stride": 7}
+
+
+def test_eval_secuenciador_pins_training_stride(tmp_registry):
+    """Evaluar un secuenciador con otro stride → error con razón; sin stride se
+    fijan los valores efectivos del entrenamiento en la config de la evaluación."""
+    from swnist.validation import validate_eval_config
+
+    dim_id = _fake_trained(tmp_registry, "dimensionador",
+                           dim_config("mnist_windows", {"window_size": 14}))
+    seq_id = _fake_trained(tmp_registry, "secuenciador", seq_config(dim_id))  # stride 7
+
+    with pytest.raises(ValueError, match="stride=7"):
+        validate_eval_config({"experiment": seq_id, "split": "test",
+                              "dataset": {"name": "mnist_sliding_sequences",
+                                          "params": {"stride": 4}}}, tmp_registry)
+
+    out = validate_eval_config({"experiment": seq_id, "split": "test",
+                                "dataset": {"name": "mnist_sliding_sequences",
+                                            "params": {}}}, tmp_registry)
+    assert out["dataset"]["params"] == {"window_size": 14, "stride": 7}
+
+
 def test_retrain_continues_from_checkpoint(tmp_registry, tiny_datasets, tmp_path):
     """init_from carga los pesos del experimento origen antes de seguir entrenando."""
     import torch

@@ -197,6 +197,53 @@
 
   <!-- ==================== DATASETS ==================== -->
   <main id="tab-datasets" class="tab-page" hidden>
+    <section class="panel" id="panel-slide">
+      <h2>Visualizar deslizamiento (window_size / stride)</h2>
+      <p class="hint">Anima el recorrido de la ventana sobre el mapa de píxeles de una
+        muestra del dataset. Los valores iniciales son los efectivos del dataset y se
+        pueden editar aquí para explorar (esto no cambia el dataset: el stride real de
+        un entrenamiento se define en su config, y las pruebas de un secuenciador usan
+        obligatoriamente el de su entrenamiento).</p>
+      <div class="row">
+        <div>
+          <label for="slide-dataset">Dataset</label>
+          <select id="slide-dataset"></select>
+        </div>
+        <div>
+          <label for="slide-split">Split / muestra</label>
+          <div class="btn-row" style="margin-top:0">
+            <select id="slide-split" style="flex:1">
+              <option value="train">train</option>
+              <option value="test">test</option>
+            </select>
+            <input id="slide-index" type="number" min="0" value="0" title="índice de la muestra" style="flex:1">
+          </div>
+        </div>
+        <div>
+          <label for="slide-ws">window_size</label>
+          <input id="slide-ws" type="number" min="1" max="28">
+        </div>
+        <div>
+          <label for="slide-stride">stride</label>
+          <input id="slide-stride" type="number" min="1">
+        </div>
+      </div>
+      <div class="sample-layout" style="margin-top:.75rem">
+        <div>
+          <canvas id="slide-canvas" width="280" height="280"></canvas>
+          <div class="btn-row anim-controls">
+            <button id="slide-play" class="small">▶ Reproducir</button>
+            <button id="slide-prev" class="small secondary">⏮</button>
+            <button id="slide-next" class="small secondary">⏭</button>
+            <span id="slide-step" class="hint"></span>
+          </div>
+        </div>
+        <div>
+          <p id="slide-info" class="hint">Elige un dataset…</p>
+        </div>
+      </div>
+    </section>
+
     <section class="panel">
       <h2>Datasets base</h2>
       <table id="builtin-ds-table">

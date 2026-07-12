@@ -21,6 +21,7 @@ from swnist.models.dimensionador import Dimensionador
 from swnist.models.secuenciador import Secuenciador
 from swnist.training.common import get_device
 from swnist.training.train_secuenciador import compute_features
+from swnist.validation import sequence_effective_params
 
 from .registry import EvaluationRegistry
 
@@ -66,8 +67,10 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     dim_model = None
     if nn_name == "secuenciador":
         _, dim_model, _ = load_model(exp_registry, exp_cfg["dimensionador_experiment"], device)
-        # El tamaño de ventana lo dicta el dimensionador con el que se entrenó.
-        ds_params["window_size"] = dim_model.config["window_size"]
+        # Ventana Y stride los dicta el entrenamiento (la trayectoria es entrada
+        # de la red). validate_eval_config ya los fijó en la config; esto cubre
+        # también a quien llame al runner directamente.
+        ds_params.update(sequence_effective_params(exp_cfg, exp_registry))
 
     dataset = build_dataset(ds_name, ds_params, train=(config["split"] == "train"), seed=seed)
     limit = config.get("limit")

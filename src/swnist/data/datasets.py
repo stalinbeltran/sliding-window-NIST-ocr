@@ -103,6 +103,7 @@ class MnistSlidingSequences(Dataset):
     ):
         self.base = load_mnist(train)
         self.window_size = window_size
+        self.stride = int(stride)
         self.positions = grid_positions(IMAGE_SIZE, window_size, stride)
 
     @property

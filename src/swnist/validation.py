@@ -50,6 +50,25 @@ def _model_window(config: dict) -> int | None:
     return int(ws) if ws is not None else None
 
 
+def sequence_effective_params(exp_config: dict, registry: ExperimentRegistry) -> dict:
+    """Ventana y stride con los que realmente se entrenó un secuenciador.
+
+    La trayectoria (posición (x, y) por paso) es ENTRADA de la red: cambiarla en
+    inferencia evalúa fuera de distribución (bug del 2026-07-11: entrenar con
+    stride 5 —36 pasos— y evaluar con stride 7 —25 pasos— hundía la accuracy de
+    0.91 a 0.56). window_size lo dicta su dimensionador; stride es el efectivo
+    del dataset de entrenamiento (defaults ⊕ params).
+    """
+    dim_exp = _get_experiment(registry, exp_config["dimensionador_experiment"],
+                              "Secuenciador: dimensionador")
+    out = {"window_size": int(dim_exp["config"]["model"]["window_size"])}
+    ds = exp_config.get("dataset") or {}
+    eff = data_registry.effective_params(ds.get("name"), ds.get("params") or {})
+    if eff.get("stride") is not None:
+        out["stride"] = int(eff["stride"])
+    return out
+
+
 def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -> dict:
     """Valida (y normaliza) una config de entrenamiento. Devuelve la config final.
 
@@ -120,11 +139,15 @@ def validate_train_config(nn: str, config: dict, registry: ExperimentRegistry) -
                 f"paso, que es justo lo que el secuenciador debe evitar. Entrena "
                 f"un dimensionador con model.window_size < {IMAGE_SIZE} (p. ej. "
                 f"14 con mnist_full y window_size=14) y selecciónalo aquí.")
-        # La ventana de la secuencia la dicta el dimensionador: se fija en la
-        # config para que quede registrado el valor realmente usado.
-        dataset_cfg = {**dataset_cfg,
-                       "params": {**(dataset_cfg.get("params") or {}),
-                                  "window_size": dim_ws}}
+        # La ventana de la secuencia la dicta el dimensionador, y el stride
+        # efectivo (dado o heredado de los defaults) se fija en la config para
+        # que quede registrado el valor realmente usado: evaluaciones y predict
+        # deben reproducir esta misma trayectoria.
+        params = {**(dataset_cfg.get("params") or {}), "window_size": dim_ws}
+        eff = data_registry.effective_params(dataset_cfg["name"], params)
+        if eff.get("stride") is not None:
+            params["stride"] = int(eff["stride"])
+        dataset_cfg = {**dataset_cfg, "params": params}
         config["dataset"] = dataset_cfg
         if init_from:
             init_dim = init_exp["config"].get("dimensionador_experiment")
@@ -168,10 +191,31 @@ def validate_eval_config(config: dict, registry: ExperimentRegistry) -> dict:
 
     if nn == "secuenciador":
         dim_id = exp["config"].get("dimensionador_experiment")
-        dim_exp = _get_experiment(
+        _get_experiment(
             registry, dim_id,
             f"Evaluación: el secuenciador {exp_id!r} referencia al dimensionador")
         _require_checkpoint(registry, dim_id, "Evaluación (dimensionador)")
+        # La trayectoria (ventana + stride) la dicta el entrenamiento: se fija en
+        # la config de la evaluación (valores efectivos, no los del formulario) y
+        # pedir otra explícitamente es un 400 con la razón.
+        eff = sequence_effective_params(exp["config"], registry)
+        params = dict(dataset_cfg.get("params") or {})
+        reasons = {
+            "window_size": "es la ventana de su dimensionador",
+            "stride": "define la trayectoria que la red aprendió (las posiciones "
+                      "(x, y) por paso son entrada de la red); con otro stride la "
+                      "evaluación sería fuera de distribución y engañosa",
+        }
+        for key, val in eff.items():
+            given = params.get(key)
+            if given is not None and int(given) != val:
+                raise ValueError(
+                    f"El secuenciador {exp_id!r} se entrenó con {key}={val}, que "
+                    f"{reasons[key]}. No se puede evaluar con {key}={given}: usa "
+                    f"{key}={val} (el formulario lo sincroniza solo) o entrena/"
+                    f"re-entrena un secuenciador con {key}={given}.")
+            params[key] = val
+        config["dataset"] = {**dataset_cfg, "params": params}
 
     split = config.get("split", "test")
     if split not in ("train", "test"):

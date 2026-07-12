@@ -20,6 +20,7 @@ from swnist.data.windows import extract_window, grid_positions
 from swnist.evaluation.runner import load_model
 from swnist.experiments.registry import ExperimentRegistry
 from swnist.training.common import get_device
+from swnist.validation import sequence_effective_params
 
 # Estadísticas de normalización de MNIST (para volver a imagen visible)
 _MEAN, _STD = 0.1307, 0.3081
@@ -92,8 +93,9 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
     info = dataset_info(ds_name)
 
     if nn_name == "secuenciador":
-        _, dim_model, _ = get_model(exp_registry, exp_cfg["dimensionador_experiment"])
-        ds_params["window_size"] = dim_model.config["window_size"]
+        # Ventana Y stride: los efectivos del entrenamiento (la trayectoria es
+        # entrada de la red); un stride distinto en la petición se ignora.
+        ds_params.update(sequence_effective_params(exp_cfg, exp_registry))
 
     ds = get_dataset(ds_name, ds_params, train=(split == "train"), seed=seed)
     if not (0 <= index < len(ds)):
@@ -119,8 +121,8 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
                 w = extract_window(display_img, top, left, ws)
                 p = F.softmax(model(w.unsqueeze(0).to(device)), dim=-1)[0]
                 steps.append(_step_fields(p))
-            out["trace"] = {"window_size": ws, "positions": positions, "steps": steps,
-                            "kind": "dimensionador"}
+            out["trace"] = {"window_size": ws, "stride": stride, "positions": positions,
+                            "steps": steps, "kind": "dimensionador"}
         else:
             out["trace_reason"] = (
                 "La muestra ya es una ventana única: no hay deslizamiento que "
@@ -141,6 +143,7 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
             positions = getattr(ds.base, "positions", None)
         out["trace"] = {
             "window_size": ws,
+            "stride": ds_params.get("stride"),
             "positions": [list(p) for p in (positions or [])],
             "steps": [_step_fields(p) for p in probs_seq],
             "kind": "secuenciador",
