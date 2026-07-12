@@ -70,13 +70,25 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     git-ignored). `margin = p1 − p2`; "ambigua" = margin < umbral (0.2 por defecto).
     API: `POST/GET /api/evaluations`, `GET /api/evaluations/<id>/results` (filtros
     all|correct|failed|ambiguous, label, pred, paginado, miniaturas PNG base64).
-16. **Datasets custom**: subconjuntos filtrados de una evaluación guardados en
-    `custom_datasets/<nombre>.json` (versionado: base + índices reproducibles;
-    nombre default automático y modificable). Semántica en `build_dataset`:
-    `train=True` → el subconjunto; `train=False` → test completo del base. Heredan
-    la compatibilidad del base y sirven para entrenar y evaluar. CRUD completo por
-    API/UI; renombrar/eliminar se bloquea (409 con razón) si un experimento los
-    referencia por nombre.
+16. **Datasets custom**: datasets guardados en `custom_datasets/<nombre>.json`
+    (versionado: base + params + split/seed + índices reproducibles; nombre default
+    automático y modificable). Semántica en `build_dataset`: `train=True` → el
+    subconjunto; `train=False` → test completo del base. Heredan la compatibilidad del
+    base y sirven para entrenar y evaluar. CRUD completo por API/UI; renombrar/eliminar
+    se bloquea (409 con razón) si un experimento los referencia por nombre.
+    Tienen **dos orígenes**:
+    - **Filtro de una evaluación** (pestaña Probar): el subconjunto son las muestras que
+      cumplen el filtro (aciertos/fallos/ambiguas, etiqueta, predicción).
+    - **Generado desde un base con params a medida** (pestaña Datasets, 2026-07-12;
+      `POST /api/custom-datasets` → `data.registry.create_custom_from_base`): las mismas
+      imágenes MNIST del split (todas, o las primeras `limit`), pero con el recorrido
+      (`window_size`, `num_steps`/`stride`) y el `stroke_width` que estás
+      previsualizando en el visualizador **congelados** en su definición (se guardan los
+      params *efectivos*, no los del formulario). Sirve para entrenar/evaluar siempre con
+      ese recorrido (reglas 20 y 21) sin depender de lo que ponga cada config. Solo se
+      genera desde un base compatible con el secuenciador: un custom ya es un dataset
+      guardado (se parte de su base) y los trazos sintéticos del dimensionador se
+      configuran con sus rangos en Entrenar → 400 con razón.
 17. **CRUD de experimentos**: renombrar es un alias (`status.label`; el id nunca
     cambia porque otros experimentos lo referencian por id), duplicar copia el
     directorio completo con id nuevo, eliminar se bloquea si el experimento corre o
