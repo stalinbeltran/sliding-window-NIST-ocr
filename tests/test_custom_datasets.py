@@ -72,7 +72,8 @@ def test_catalog_integration_and_build(tmp_custom_store):
 
     # el catálogo expone los params efectivos del base como defaults del custom
     # (incluidos los que el base no fijó, como empty_fraction, con su default)
-    assert entry["defaults"] == {"empty_fraction": 0.0, **BASE["params"]}
+    assert entry["defaults"] == {"empty_fraction": 0.0, "stroke_width": 0,
+                                 **BASE["params"]}
 
     # cambiar windows_per_image invalidaría los índices guardados → rechazado con razón
     with pytest.raises(ValueError, match="windows_per_image"):

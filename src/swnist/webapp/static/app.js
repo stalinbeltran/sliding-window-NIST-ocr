@@ -408,6 +408,12 @@ function testDatasetParams() {
       const ef = exp.config.dataset?.params?.empty_fraction;
       params.empty_fraction = ef !== undefined ? ef : 0.0;
     }
+    // Mismo grosor de trazo que en el entrenamiento: un modelo entrenado con
+    // el dataset uniformizado se evalúa sobre el dataset uniformizado.
+    if ("stroke_width" in params) {
+      const sw = exp.config.dataset?.params?.stroke_width;
+      params.stroke_width = sw !== undefined ? sw : 0;
+    }
   }
   if (exp && exp.config.nn === "secuenciador") {
     const tp = exp.config.dataset?.params || {};
@@ -419,6 +425,8 @@ function testDatasetParams() {
       if (tp[k] !== undefined && k in params) params[k] = tp[k];
       else delete params[k];
     }
+    // stroke_width del entrenamiento (0 si el experimento es anterior al param)
+    if ("stroke_width" in params) params.stroke_width = tp.stroke_width ?? 0;
   }
   return params;
 }
@@ -478,7 +486,8 @@ async function refreshEvals() {
       <td class="hint">${ev.config.dataset.name} (${ev.config.split}${ev.config.limit ? ", n≤" + ev.config.limit : ""})${
         ev.config.dataset.params?.window_size !== undefined ? `<br>ventana ${ev.config.dataset.params.window_size}` : ""}${
         ev.config.dataset.params?.stride !== undefined ? ` · stride ${ev.config.dataset.params.stride}` : ""}${
-        ev.config.dataset.params?.num_steps !== undefined ? ` · num_steps ${ev.config.dataset.params.num_steps}` : ""}</td>
+        ev.config.dataset.params?.num_steps !== undefined ? ` · num_steps ${ev.config.dataset.params.num_steps}` : ""}${
+        ev.config.dataset.params?.stroke_width ? ` · trazo ${ev.config.dataset.params.stroke_width}px` : ""}</td>
       <td class="status-${st}">${st}${ev.running ? ` ⏳ ${prog ? prog.done + "/" + prog.total : ""}` : ""}</td>
       <td>${acc ?? "—"}</td>
       <td>
@@ -801,6 +810,7 @@ function onSlideDatasetChange() {
   $("slide-stride").disabled = contour;
   $("slide-steps").value = contour ? ds.defaults.num_steps : "";
   $("slide-steps").disabled = !contour;
+  $("slide-stroke").value = ds.defaults.stroke_width ?? 0;
   refreshSlide();
 }
 
@@ -810,36 +820,43 @@ async function refreshSlide() {
   const info = $("slide-info");
   if (!name) return;
   try {
+    const stroke = Math.max(0, parseInt($("slide-stroke").value, 10) || 0);
     const q = new URLSearchParams();
     if ($("slide-ws").value) q.set("window_size", $("slide-ws").value);
     if ($("slide-stride").value) q.set("stride", $("slide-stride").value);
     if ($("slide-steps").value) q.set("num_steps", $("slide-steps").value);
+    q.set("stroke_width", stroke);
     // Para los datasets que siguen el trazo el recorrido es de la muestra elegida
     q.set("split", $("slide-split").value);
     q.set("index", Math.max(0, parseInt($("slide-index").value, 10) || 0));
     const r = await api(`/api/datasets/${name}/slide?` + q);
     let imgEl = null;
     if (r.full_image) {
-      // muestra real del dataset como fondo (mapa de píxeles encima)
+      // muestra real del dataset como fondo (mapa de píxeles encima), con el
+      // trazo uniformizado si stroke_width > 0 (previsualización del dataset)
       const idx = Math.max(0, parseInt($("slide-index").value, 10) || 0);
       const sq = new URLSearchParams({ split: $("slide-split").value, offset: idx,
-                                       limit: 1, params: "{}" });
+                                       limit: 1,
+                                       params: JSON.stringify(stroke > 0 ? { stroke_width: stroke } : {}) });
       const s = await api(`/api/datasets/${name}/samples?` + sq);
       if (s.items.length) imgEl = await loadPng(s.items[0].png);
     }
     SLIDE = { ...r, imgEl };
     slideIdx = 0;
     const perAxis = r.axis_coords.length;
+    const strokeInfo = r.stroke_width > 0
+      ? `<br>trazo uniformizado a ~${r.stroke_width} px (stroke_width)` : "";
     info.innerHTML = r.follows_content
       ? `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
         `${r.window_size}×${r.window_size}, num_steps ${r.num_steps}` +
-        `<br>recorrido derivado del trazo de la muestra` +
+        `<br>recorrido derivado del trazo de la muestra` + strokeInfo +
         (r.note ? `<br><br>${r.note}` : "")
       : `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
         `${r.window_size}×${r.window_size}, stride ${r.stride}` +
         `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
         `<br>stride propio del dataset: ${r.dataset_uses_stride
           ? (r.effective_defaults.stride ?? "—") : "no tiene (ventanas aleatorias)"}` +
+        strokeInfo +
         (r.note ? `<br><br>${r.note}` : "");
     renderSlideStep();
     startSlide();
@@ -906,7 +923,7 @@ function stopSlide() {
 }
 
 $("slide-dataset").addEventListener("change", onSlideDatasetChange);
-["slide-ws", "slide-stride", "slide-steps", "slide-split", "slide-index"].forEach((id) =>
+["slide-ws", "slide-stride", "slide-steps", "slide-stroke", "slide-split", "slide-index"].forEach((id) =>
   $(id).addEventListener("change", refreshSlide));
 $("slide-play").addEventListener("click", () => (slideTimer ? stopSlide() : startSlide()));
 $("slide-prev").addEventListener("click", () => {

@@ -14,35 +14,43 @@ DATASETS = {
         "description": "Imágenes MNIST completas 28×28; con window_size < 28 entrena "
                        "con ventanas aleatorias de cada imagen (windows_per_image por imagen). "
                        "Con empty_fraction > 0 esa fracción son ventanas vacías con la "
-                       "clase extra 'no hay nada' (10).",
+                       "clase extra 'no hay nada' (10). stroke_width > 0 uniformiza el "
+                       "grosor del trazo a ~N px (0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistFull,
-        "defaults": {"window_size": 28, "windows_per_image": 1, "empty_fraction": 0.0},
+        "defaults": {"window_size": 28, "windows_per_image": 1, "empty_fraction": 0.0,
+                     "stroke_width": 0},
         "full_image": True,   # la muestra visible es una imagen completa 28×28
     },
     "mnist_windows": {
         "description": "Ventanas aleatorias de MNIST etiquetadas con el dígito de origen; "
                        "con empty_fraction > 0 esa fracción son ventanas vacías con la "
-                       "clase extra 'no hay nada' (10).",
+                       "clase extra 'no hay nada' (10). stroke_width > 0 uniformiza el "
+                       "grosor del trazo a ~N px (0 = original).",
         "compatible_with": ["dimensionador"],
         "builder": MnistWindows,
-        "defaults": {"window_size": 14, "windows_per_image": 4, "empty_fraction": 0.0},
+        "defaults": {"window_size": 14, "windows_per_image": 4, "empty_fraction": 0.0,
+                     "stroke_width": 0},
         "full_image": False,
     },
     "mnist_sliding_sequences": {
-        "description": "Secuencias de ventanas (recorrido raster) con posición (x, y) por paso.",
+        "description": "Secuencias de ventanas (recorrido raster) con posición (x, y) "
+                       "por paso. stroke_width > 0 uniformiza el grosor del trazo a "
+                       "~N px (0 = original).",
         "compatible_with": ["secuenciador"],
         "builder": MnistSlidingSequences,
-        "defaults": {"window_size": 14, "stride": 7},
+        "defaults": {"window_size": 14, "stride": 7, "stroke_width": 0},
         "full_image": True,
     },
     "mnist_contour_sequences": {
         "description": "Secuencias de ventanas que siguen el trazo del carácter "
                        "(esqueleto → camino → num_steps posiciones) con posición "
-                       "(x, y) por paso; la trayectoria depende de cada muestra.",
+                       "(x, y) por paso; la trayectoria depende de cada muestra. "
+                       "stroke_width > 0 uniformiza el grosor del trazo a ~N px "
+                       "(0 = original).",
         "compatible_with": ["secuenciador"],
         "builder": MnistContourSequences,
-        "defaults": {"window_size": 14, "num_steps": 12},
+        "defaults": {"window_size": 14, "num_steps": 12, "stroke_width": 0},
         "full_image": True,
     },
 }
@@ -127,6 +135,13 @@ def validate_dataset_params(name: str, params: dict) -> None:
         raise ValueError(
             f"num_steps debe ser un entero ≥ 2 (con un solo paso no hay secuencia "
             f"que recorrer); recibido: {ns!r}.")
+    sw = params.get("stroke_width")
+    if sw is not None and (isinstance(sw, bool) or not isinstance(sw, int)
+                           or not 0 <= sw <= IMAGE_SIZE):
+        raise ValueError(
+            f"stroke_width debe ser un entero entre 0 y {IMAGE_SIZE}: 0 deja el "
+            f"trazo original y N > 0 redibuja el carácter con trazo de ~N px de "
+            f"grosor uniforme (esqueleto re-entintado); recibido: {sw!r}.")
     ef = params.get("empty_fraction")
     if ef is not None and (isinstance(ef, bool) or not isinstance(ef, (int, float))
                            or not 0 <= ef < 1):

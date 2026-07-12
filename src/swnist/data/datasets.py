@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 
 from swnist import DATA_DIR
+from .strokes import StrokeUniformizer
 from .trajectory import contour_positions
 from .windows import extract_window, grid_positions, normalize_position
 
@@ -50,6 +51,10 @@ class MnistFull(Dataset):
     recuadro"): se toma de una región vacía de la misma imagen y, si la imagen
     no tiene ninguna, es una ventana de fondo puro. También determinista dado
     (seed, idx).
+
+    Con stroke_width > 0 el carácter se redibuja con trazo de grosor uniforme
+    (ver swnist.data.strokes) antes de extraer ventanas: un dataset "más
+    uniforme" donde trazos gruesos y delgados se ven iguales.
     """
 
     def __init__(
@@ -59,12 +64,20 @@ class MnistFull(Dataset):
         window_size: int = IMAGE_SIZE,
         windows_per_image: int = 1,
         empty_fraction: float = 0.0,
+        stroke_width: int = 0,
     ):
         self.base = load_mnist(train)
         self.window_size = int(window_size)
         self.windows_per_image = int(windows_per_image)
         self.empty_fraction = float(empty_fraction)
+        self.stroke_width = int(stroke_width)
+        self._strokes = StrokeUniformizer(stroke_width)
         self.seed = seed
+
+    def _image(self, base_idx) -> tuple[torch.Tensor, int]:
+        """Imagen base con el trazo uniformizado (si stroke_width > 0)."""
+        image, label = self.base[base_idx]
+        return self._strokes(image, base_idx), label
 
     def __len__(self):
         return len(self.base) * self.windows_per_image
@@ -98,7 +111,7 @@ class MnistFull(Dataset):
         return extract_window(image, top, left, ws)
 
     def __getitem__(self, idx):
-        image, label = self.base[idx // self.windows_per_image]
+        image, label = self._image(idx // self.windows_per_image)
         gen = None
         if self.empty_fraction > 0:
             gen = self._gen(idx)
@@ -117,7 +130,7 @@ class MnistFull(Dataset):
         """(imagen mostrable, etiqueta): la imagen completa de la que sale la
         ventana, con la etiqueta EFECTIVA de la muestra (EMPTY_LABEL si es una
         ventana vacía)."""
-        image, label = self.base[idx // self.windows_per_image]
+        image, label = self._image(idx // self.windows_per_image)
         return image, EMPTY_LABEL if self._is_empty_sample(idx) else label
 
 
@@ -135,10 +148,11 @@ class MnistWindows(MnistFull):
         windows_per_image: int = 4,
         seed: int = 0,
         empty_fraction: float = 0.0,
+        stroke_width: int = 0,
     ):
         super().__init__(train=train, seed=seed, window_size=window_size,
                          windows_per_image=windows_per_image,
-                         empty_fraction=empty_fraction)
+                         empty_fraction=empty_fraction, stroke_width=stroke_width)
 
     def display_item(self, idx):
         """La muestra visible es la ventana misma (lo que recibe la NN)."""
@@ -160,10 +174,13 @@ class MnistSlidingSequences(Dataset):
         window_size: int = 14,
         stride: int = 7,
         seed: int = 0,
+        stroke_width: int = 0,
     ):
         self.base = load_mnist(train)
         self.window_size = window_size
         self.stride = int(stride)
+        self.stroke_width = int(stroke_width)
+        self._strokes = StrokeUniformizer(stroke_width)
         self.positions = grid_positions(IMAGE_SIZE, window_size, stride)
 
     @property
@@ -179,6 +196,7 @@ class MnistSlidingSequences(Dataset):
 
     def __getitem__(self, idx):
         image, label = self.base[idx]
+        image = self._strokes(image, idx)
         windows, coords = [], []
         for top, left in self.trajectory(idx):
             windows.append(extract_window(image, top, left, self.window_size))
@@ -191,7 +209,8 @@ class MnistSlidingSequences(Dataset):
 
     def display_item(self, idx):
         """La muestra visible es la imagen completa que recorre la ventana."""
-        return self.base[idx]
+        image, label = self.base[idx]
+        return self._strokes(image, idx), label
 
 
 class MnistContourSequences(Dataset):
@@ -211,11 +230,20 @@ class MnistContourSequences(Dataset):
         window_size: int = 14,
         num_steps: int = 12,
         seed: int = 0,
+        stroke_width: int = 0,
     ):
         self.base = load_mnist(train)
         self.window_size = int(window_size)
         self.num_steps = int(num_steps)
+        self.stroke_width = int(stroke_width)
+        self._strokes = StrokeUniformizer(stroke_width)
         self._traj_cache: dict[int, list[tuple[int, int]]] = {}
+
+    def _image(self, idx) -> tuple[torch.Tensor, int]:
+        """Imagen con el trazo uniformizado (si stroke_width > 0): la
+        trayectoria y las ventanas deben salir de la MISMA imagen."""
+        image, label = self.base[idx]
+        return self._strokes(image, idx), label
 
     @property
     def sequence_length(self) -> int:
@@ -228,13 +256,13 @@ class MnistContourSequences(Dataset):
         """Posiciones (top, left) de la ventana para la muestra idx (cacheadas:
         el esqueleto solo se calcula una vez por imagen)."""
         if idx not in self._traj_cache:
-            image, _ = self.base[idx]
+            image, _ = self._image(idx)
             self._traj_cache[idx] = contour_positions(
                 image, self.window_size, self.num_steps, IMAGE_SIZE)
         return self._traj_cache[idx]
 
     def __getitem__(self, idx):
-        image, label = self.base[idx]
+        image, label = self._image(idx)
         windows, coords = [], []
         for top, left in self.trajectory(idx):
             windows.append(extract_window(image, top, left, self.window_size))
@@ -247,4 +275,4 @@ class MnistContourSequences(Dataset):
 
     def display_item(self, idx):
         """La muestra visible es la imagen completa que recorre la ventana."""
-        return self.base[idx]
+        return self._image(idx)

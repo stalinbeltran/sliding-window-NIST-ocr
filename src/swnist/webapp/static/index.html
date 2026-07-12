@@ -198,13 +198,16 @@
   <!-- ==================== DATASETS ==================== -->
   <main id="tab-datasets" class="tab-page" hidden>
     <section class="panel" id="panel-slide">
-      <h2>Visualizar deslizamiento (window_size / stride / num_steps)</h2>
+      <h2>Visualizar deslizamiento (window_size / stride / num_steps / stroke_width)</h2>
       <p class="hint">Anima el recorrido de la ventana sobre el mapa de píxeles de una
         muestra del dataset. Los valores iniciales son los efectivos del dataset y se
         pueden editar aquí para explorar (esto no cambia el dataset: la trayectoria real
         de un entrenamiento se define en su config, y las pruebas de un secuenciador usan
         obligatoriamente la de su entrenamiento). En los datasets que siguen el trazo
-        (num_steps) el recorrido depende de la muestra elegida.</p>
+        (num_steps) el recorrido depende de la muestra elegida. stroke_width &gt; 0
+        redibuja el carácter con trazo de grosor uniforme (previsualízalo aquí; para
+        entrenar con el dataset uniformizado pon el mismo valor en
+        <code>dataset.params.stroke_width</code> en Entrenar).</p>
       <div class="row">
         <div>
           <label for="slide-dataset">Dataset</label>
@@ -231,6 +234,10 @@
         <div>
           <label for="slide-steps">num_steps</label>
           <input id="slide-steps" type="number" min="2">
+        </div>
+        <div>
+          <label for="slide-stroke" title="0 = trazo original; N > 0 redibuja el carácter con trazo de ~N px de grosor uniforme">stroke_width</label>
+          <input id="slide-stroke" type="number" min="0" max="28">
         </div>
       </div>
       <div class="sample-layout" style="margin-top:.75rem">

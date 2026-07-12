@@ -113,12 +113,14 @@ def api_datasets(nn: str | None = None):
 @app.get("/api/datasets/{name}/slide")
 def api_dataset_slide(name: str, window_size: int | None = None,
                       stride: int | None = None, num_steps: int | None = None,
+                      stroke_width: int | None = None,
                       split: str = "train", index: int = 0, seed: int = 42):
     """Recorrido de la ventana deslizante de un dataset, para visualizarlo y
     verificar el stride/num_steps sin tener que lanzar una prueba.
-    window_size/stride/num_steps sobrescriben los efectivos del dataset (solo
-    para la visualización). En los datasets que siguen el trazo (num_steps) el
-    recorrido depende de la muestra: se calcula sobre (split, index)."""
+    window_size/stride/num_steps/stroke_width sobrescriben los efectivos del
+    dataset (solo para la visualización). En los datasets que siguen el trazo
+    (num_steps) el recorrido depende de la muestra: se calcula sobre
+    (split, index), con el trazo uniformizado si stroke_width > 0."""
     info = _400(data_registry.dataset_info, name)
     eff = _400(data_registry.effective_params, name, {})
     uses_stride = "stride" in eff
@@ -126,6 +128,10 @@ def api_dataset_slide(name: str, window_size: int | None = None,
     if not 1 <= ws <= IMAGE_SIZE:
         raise HTTPException(400, f"window_size debe estar entre 1 y {IMAGE_SIZE}; "
                                  f"recibido: {ws}.")
+    sw = int(stroke_width) if stroke_width is not None else int(eff.get("stroke_width", 0) or 0)
+    if not 0 <= sw <= IMAGE_SIZE:
+        raise HTTPException(400, f"stroke_width debe estar entre 0 y {IMAGE_SIZE} "
+                                 f"(0 = trazo original); recibido: {sw}.")
 
     if "num_steps" in eff:
         # Trayectoria por el trazo: el recorrido es de la muestra concreta.
@@ -133,13 +139,15 @@ def api_dataset_slide(name: str, window_size: int | None = None,
         if ns < 2:
             raise HTTPException(400, f"num_steps debe ser ≥ 2; recibido: {ns}.")
         ds = _400(inference.get_dataset, name,
-                  {"window_size": ws, "num_steps": ns}, split == "train", seed)
+                  {"window_size": ws, "num_steps": ns, "stroke_width": sw},
+                  split == "train", seed)
         if not 0 <= index < len(ds):
             raise HTTPException(400, f"Índice fuera de rango: {index} (el dataset "
                                      f"tiene {len(ds)} muestras).")
         positions = ds.trajectory(index)
         return {
             "name": name, "image_size": IMAGE_SIZE, "window_size": ws,
+            "stroke_width": sw,
             "stride": None, "num_steps": ns, "dataset_uses_stride": False,
             "follows_content": True, "effective_defaults": eff,
             "full_image": True, "steps": len(positions), "axis_coords": [],
@@ -171,6 +179,7 @@ def api_dataset_slide(name: str, window_size: int | None = None,
                      f"consecutivas.")
     return {
         "name": name, "image_size": IMAGE_SIZE, "window_size": ws, "stride": st,
+        "stroke_width": sw,
         "num_steps": None, "dataset_uses_stride": uses_stride,
         "follows_content": False, "effective_defaults": eff,
         "full_image": info.get("full_image", True),

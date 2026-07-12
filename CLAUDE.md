@@ -147,6 +147,25 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     El secuenciador no cambia: sigue clasificando 0–9, pero las features del
     dimensionador ahora le comunican que la región observada está vacía.
 
+23. **Uniformización del grosor de trazo** (2026-07-12): todos los datasets (builtin y
+    custom) aceptan `stroke_width` ∈ [0, 28] (`src/swnist/data/strokes.py`): 0 (default)
+    deja el trazo original; N > 0 redibuja el carácter con trazo de ~N px de grosor
+    uniforme (tinta → esqueleto Zhang-Suen reutilizado de `trajectory.py` →
+    re-entintado por distancia al esqueleto con borde anti-alias de 1 px), de modo que
+    un trazo grueso y uno delgado del mismo carácter quedan iguales ("dataset más
+    uniforme"). Determinista (sin RNG; caché uint8 por índice en `StrokeUniformizer`);
+    ventanas, ventanas vacías (`empty_fraction`), trayectoria por el trazo y
+    `display_item` salen todos de la MISMA imagen transformada; una imagen sin tinta
+    vuelve intacta. Con `stroke_width=0` las muestras antiguas se reproducen idénticas.
+    En un custom es sobrescribible (no invalida índices ni etiquetas). UI: el param
+    aparece en `dataset.params` en Entrenar como cualquier otro; la pestaña Probar
+    propaga el `stroke_width` del entrenamiento a las evaluaciones (dimensionador y
+    secuenciador; el servidor NO bloquea un valor distinto explícito — evaluar con otro
+    grosor es un experimento de robustez legítimo); el visualizador de la pestaña
+    Datasets tiene un input `stroke_width` que previsualiza la transformación sobre la
+    muestra elegida, y `GET /api/datasets/<name>/slide` lo acepta (el recorrido por el
+    trazo se calcula sobre la imagen transformada; fuera de rango → 400 con razón).
+
 ## Arquitectura
 
 Dos redes neuronales:
@@ -194,6 +213,8 @@ src/swnist/
   validation.py            ← compatibilidad NN↔dataset↔checkpoint (razones claras, 400)
   data/
     windows.py             ← utilidades de ventana deslizante (posiciones, extracción)
+    trajectory.py          ← trayectoria por el trazo: esqueleto → camino → num_steps (regla 21)
+    strokes.py             ← uniformización del grosor de trazo (stroke_width, regla 23)
     datasets.py            ← MnistFull, MnistWindows, MnistSlidingSequences (+ display_item)
     custom.py              ← datasets custom: CustomDatasetStore (CRUD) + CustomSubset
     registry.py            ← catálogo de datasets (builtin+custom) + compatibilidad por NN
