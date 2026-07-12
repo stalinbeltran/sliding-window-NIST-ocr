@@ -18,7 +18,7 @@ tinta), pero sí trazos cortos (``length_min`` pequeño).
 import numpy as np
 import torch
 
-from swnist.descriptors import NUM_DESCRIPTORS, IDX, category_index
+from swnist.descriptors import IDX, NUM_DESCRIPTORS, category_index
 
 IMAGE_SIZE = 28  # (no se usa aquí, pero mantiene la convención del paquete)
 
@@ -46,6 +46,8 @@ STROKE_DEFAULTS: dict = {
     "dash_period_min": 1.2,    # periodo del patrón de guiones (px)
     "dash_period_max": 2.5,
     "stroke_width": 1.0,       # grosor del trazo (px)
+    "empty_fraction": 0.1,     # fracción de ventanas VACÍAS (ink=0); su geometría
+                               # se enmascara de la pérdida (ver descriptors.GEOMETRY)
 }
 
 # Validación: (tipo, mínimo, máximo) por parámetro. Los *_min/*_max además deben
@@ -66,6 +68,7 @@ _SPEC: dict = {
     "dash_period_min": ("float", 0.3, 28.0),
     "dash_period_max": ("float", 0.3, 28.0),
     "stroke_width": ("float", 0.3, 10.0),
+    "empty_fraction": ("float", 0.0, 0.9),
 }
 
 _RANGE_PAIRS = [
@@ -139,11 +142,24 @@ class SyntheticStrokes(torch.utils.data.Dataset):
         base = (self.seed * 2 + (0 if self.train else 1)) * 1_000_003 + idx
         return np.random.RandomState(base % (2**32))
 
-    def _sample(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
-        """(gris (ws, ws) en [0,1], target (6,)) determinista para el índice idx."""
+    def _sample(self, idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(gris (ws, ws) en [0,1], target (7,), mask (7,)) determinista para idx.
+
+        `mask` marca qué canales se supervisan: en una ventana vacía solo se
+        supervisa `ink` (los canales de geometría no tienen sentido sin trazo).
+        """
         cfg = self.cfg
         ws = self.window_size
         rng = self._rng(idx)
+
+        # Ventana vacía: solo ancla el canal de tinta (ink=0), geometría enmascarada.
+        # Con empty_fraction=0 no se consume RNG (muestras antiguas idénticas).
+        if cfg["empty_fraction"] > 0 and rng.rand() < cfg["empty_fraction"]:
+            gray = np.zeros((ws, ws), dtype=np.float32)
+            target = np.zeros(NUM_DESCRIPTORS, dtype=np.float32)  # ink=0 incluido
+            mask = np.zeros(NUM_DESCRIPTORS, dtype=np.float32)
+            mask[IDX["ink"]] = 1.0
+            return gray, target, mask
 
         curved = rng.rand() < cfg["curved_fraction"]
         broken = rng.rand() < cfg["broken_fraction"]
@@ -201,15 +217,17 @@ class SyntheticStrokes(torch.utils.data.Dataset):
         target[IDX["angle_sin2"]] = np.sin(2 * theta)
         target[IDX["angle_cos2"]] = np.cos(2 * theta)
         target[IDX["continuity"]] = duty
-        return gray, target
+        target[IDX["ink"]] = float(np.clip(gray.mean(), 0.0, 1.0))  # cobertura
+        return gray, target, np.ones(NUM_DESCRIPTORS, dtype=np.float32)
 
     def __getitem__(self, idx: int):
-        gray, target = self._sample(idx)
+        gray, target, mask = self._sample(idx)
         window = ((gray - _MEAN) / _STD).astype(np.float32)
         return (torch.from_numpy(window).unsqueeze(0),
-                torch.from_numpy(target))
+                torch.from_numpy(target),
+                torch.from_numpy(mask))
 
     def display_item(self, idx: int):
         """(ventana mostrable, índice de categoría) para miniaturas/filtros."""
-        window, target = self[idx]
+        window, target, _ = self[idx]
         return window, category_index(target)

@@ -168,7 +168,7 @@ def test_api_samples_and_predict(client):
     body = r.json()
     assert body["total"] > 0 and len(body["items"]) == 5
     assert {"index", "label", "png"} <= set(body["items"][0])
-    assert body["items"][0]["label"] in range(4)  # categoría de trazo
+    assert body["items"][0]["label"] in range(5)  # categoría de trazo (incluye 'vacío')
 
     # predicción sobre una ventana: el dimensionador devuelve descriptores, no
     # una distribución de dígitos; no hay trace (la muestra ES la ventana).
@@ -178,8 +178,8 @@ def test_api_samples_and_predict(client):
     })
     assert r.status_code == 200
     p = r.json()
-    assert p["kind"] == "descriptors" and len(p["descriptors"]) == 6
-    assert p["pred"] in range(4) and "category" in p and "angle_deg" in p
+    assert p["kind"] == "descriptors" and len(p["descriptors"]) == 7
+    assert p["pred"] in range(5) and "category" in p and "angle_deg" in p
     assert p["trace"] is None and p["trace_reason"]
 
 
@@ -289,8 +289,9 @@ def test_api_dimensionador_descriptor_eval_and_secuenciador(client):
     info = c.get(f"/api/evaluations/{eval_id}").json()
     assert info["status"]["status"] == "completed", info["status"].get("error")
     summary = info["status"]["summary"]
-    assert len(summary["confusion"]) == 4  # categorías recta/curva × continua/entrecortada
+    assert len(summary["confusion"]) == 5  # 4 categorías de trazo + 'vacío'
     assert "angle_mae_deg" in summary and "descriptor_mae" in summary
+    assert "ink" in summary["descriptor_mae"]
     assert 0 <= summary["acc"] <= 1
 
     # los resultados por muestra traen los descriptores predichos y el objetivo

@@ -29,7 +29,17 @@ DESCRIPTORS: list[tuple[str, str]] = [
     ("angle_sin2", "tanh"),       # sin(2θ)
     ("angle_cos2", "tanh"),       # cos(2θ)
     ("continuity", "sigmoid"),    # 1 = continua, 0 = entrecortada (duty de tinta)
+    ("ink", "sigmoid"),           # cantidad de tinta (cobertura = gris medio); 0 = ventana vacía
 ]
+
+# Canales de "geometría": solo tienen sentido cuando hay un trazo. En una ventana
+# vacía se enmascaran de la pérdida (no se supervisan); `ink` siempre se supervisa.
+GEOMETRY = ("straightness", "horizontal", "vertical", "angle_sin2", "angle_cos2",
+            "continuity")
+
+# Por debajo de esta tinta (gris medio) la ventana se considera "vacía" para la
+# categoría discreta (ver category_index) y en la UI.
+EMPTY_INK = 0.04
 
 NAMES: list[str] = [n for n, _ in DESCRIPTORS]
 NUM_DESCRIPTORS: int = len(DESCRIPTORS)
@@ -72,15 +82,20 @@ def angle_error_deg(sin2_a, cos2_a, sin2_b, cos2_b) -> float:
 
 # Categoría discreta derivada de los descriptores: sirve para reutilizar la grilla
 # de "confusión" y los filtros (aciertos/fallos/ambiguos) de la pestaña Probar sin
-# rediseñarla. recta/curva por `straightness`, continua/entrecortada por `continuity`.
+# rediseñarla. "vacío" cuando la tinta es ~0; si no, recta/curva por `straightness`
+# y continua/entrecortada por `continuity`.
 CATEGORIES: list[str] = [
     "recta·continua", "recta·entrecortada",
     "curva·continua", "curva·entrecortada",
+    "vacío",
 ]
+EMPTY_CATEGORY = 4
 
 
 def category_index(vec) -> int:
-    """vec (6,) en rango natural -> índice en CATEGORIES (umbral 0.5)."""
+    """vec en rango natural -> índice en CATEGORIES (umbral 0.5; vacío si ink < EMPTY_INK)."""
+    if float(vec[IDX["ink"]]) < EMPTY_INK:
+        return EMPTY_CATEGORY
     straight = float(vec[IDX["straightness"]]) >= 0.5
     continuous = float(vec[IDX["continuity"]]) >= 0.5
     return (0 if straight else 2) + (0 if continuous else 1)

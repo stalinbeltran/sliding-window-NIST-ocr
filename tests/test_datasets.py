@@ -40,34 +40,70 @@ def test_normalize_position_range():
 
 # ---------- dataset sintético de trazos (dimensionador) ----------
 
+_MEAN, _STD = 0.1307, 0.3081
+
+
+def _gray(w: torch.Tensor) -> torch.Tensor:
+    return (w * _STD + _MEAN).clamp(0, 1)
+
+
 def test_synthetic_strokes_item_shape_and_target():
-    ds = SyntheticStrokes(train=True, seed=1, num_samples=50, window_size=5)
+    ds = SyntheticStrokes(train=True, seed=1, num_samples=50, window_size=5,
+                          empty_fraction=0.0)
     assert len(ds) == 50
-    w, target = ds[0]
+    w, target, mask = ds[0]
     assert w.shape == (1, 5, 5) and w.dtype == torch.float32
     assert target.shape == (NUM_DESCRIPTORS,) and target.dtype == torch.float32
+    assert mask.shape == (NUM_DESCRIPTORS,) and (mask == 1).all()  # trazo: todo supervisado
     # Rangos naturales por canal: sigmoid ∈ [0,1], tanh ∈ [-1,1].
-    for name in ("straightness", "horizontal", "vertical", "continuity"):
+    for name in ("straightness", "horizontal", "vertical", "continuity", "ink"):
         assert 0.0 <= float(target[IDX[name]]) <= 1.0
     for name in ("angle_sin2", "angle_cos2"):
         assert -1.0 <= float(target[IDX[name]]) <= 1.0
 
 
 def test_synthetic_strokes_never_empty():
-    """Nunca se genera una ventana completamente vacía (regla del usuario)."""
+    """La generación de trazos nunca produce una ventana vacía (regla del usuario);
+    las ventanas vacías son solo las de empty_fraction, aquí desactivado."""
     ds = SyntheticStrokes(train=True, seed=2, num_samples=300, window_size=5,
-                          length_min=STROKE_DEFAULTS["length_min"])
+                          empty_fraction=0.0, length_min=STROKE_DEFAULTS["length_min"])
     for i in range(300):
-        w, _ = ds[i]
-        assert float(w.abs().max()) > 1e-6  # hay al menos un píxel con tinta
+        w, _, _ = ds[i]
+        assert float(_gray(w).max()) > 0.02  # hay tinta
+
+
+def test_synthetic_strokes_ink_is_coverage():
+    """El descriptor ink = cobertura (gris medio) de la ventana."""
+    ds = SyntheticStrokes(train=True, seed=4, num_samples=80, window_size=5,
+                          empty_fraction=0.0)
+    for i in range(80):
+        w, t, _ = ds[i]
+        assert abs(float(t[IDX["ink"]]) - float(_gray(w).mean())) < 1e-4
+
+
+def test_synthetic_strokes_empty_windows():
+    """empty_fraction: esa fracción son ventanas vacías (ink=0, geometría enmascarada,
+    categoría 'vacío'); con empty_fraction=0 nada se enmascara."""
+    ds = SyntheticStrokes(train=True, seed=3, num_samples=300, window_size=5,
+                          empty_fraction=0.4)
+    empties = [i for i in range(300) if float(ds[i][2][IDX["straightness"]]) == 0]
+    assert 0.3 < len(empties) / 300 < 0.5
+    for i in empties[:20]:
+        w, t, m = ds[i]
+        assert float(t[IDX["ink"]]) == 0.0 and float(m[IDX["ink"]]) == 1.0
+        assert float(m[IDX["straightness"]]) == 0.0  # geometría no supervisada
+        assert category_index(t) == 4  # vacío
+        assert float(_gray(w).max()) < 1e-5  # ventana en blanco
+    ds0 = SyntheticStrokes(train=True, seed=3, num_samples=50, empty_fraction=0.0)
+    assert all(float(ds0[i][2].min()) == 1.0 for i in range(50))  # nada enmascarado
 
 
 def test_synthetic_strokes_deterministic_and_split_disjoint():
     a = SyntheticStrokes(train=True, seed=5, num_samples=20)
     b = SyntheticStrokes(train=True, seed=5, num_samples=20)
-    wa, ta = a[7]
-    wb, tb = b[7]
-    assert torch.equal(wa, wb) and torch.equal(ta, tb)  # determinista dado (seed, idx)
+    wa, ta, ma = a[7]
+    wb, tb, mb = b[7]
+    assert torch.equal(wa, wb) and torch.equal(ta, tb) and torch.equal(ma, mb)
     # otra semilla → otra muestra
     c = SyntheticStrokes(train=True, seed=6, num_samples=20)
     assert not torch.equal(a[7][0], c[7][0])
@@ -77,16 +113,18 @@ def test_synthetic_strokes_deterministic_and_split_disjoint():
 
 
 def test_synthetic_strokes_straight_vs_curved_targets():
-    # Solo rectas → straightness == 1 en todas las muestras.
-    straight = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=0.0)
+    # Solo rectas (sin vacías) → straightness == 1 en todas las muestras.
+    straight = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=0.0,
+                                empty_fraction=0.0)
     assert all(float(straight[i][1][IDX["straightness"]]) == 1.0 for i in range(40))
     # Solo curvas → straightness < 1 (hay curvatura).
-    curved = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=1.0)
+    curved = SyntheticStrokes(train=True, seed=3, num_samples=40, curved_fraction=1.0,
+                              empty_fraction=0.0)
     assert all(float(curved[i][1][IDX["straightness"]]) < 1.0 for i in range(40))
 
 
 def test_synthetic_strokes_display_item_category():
-    ds = SyntheticStrokes(train=True, seed=1, num_samples=10)
+    ds = SyntheticStrokes(train=True, seed=1, num_samples=10, empty_fraction=0.0)
     w, cat = ds.display_item(0)
     assert w.shape == (1, ds.window_size, ds.window_size)
     assert cat == category_index(ds[0][1]) and 0 <= cat <= 3
@@ -95,8 +133,8 @@ def test_synthetic_strokes_display_item_category():
 def test_synthetic_strokes_via_build_dataset():
     ds = build_dataset("synthetic_strokes", {"num_samples": 30, "window_size": 7},
                        train=True, seed=0)
-    w, t = ds[0]
-    assert w.shape == (1, 7, 7) and t.shape == (NUM_DESCRIPTORS,)
+    w, t, m = ds[0]
+    assert w.shape == (1, 7, 7) and t.shape == (NUM_DESCRIPTORS,) and m.shape == (NUM_DESCRIPTORS,)
 
 
 def test_synthetic_strokes_param_validation():

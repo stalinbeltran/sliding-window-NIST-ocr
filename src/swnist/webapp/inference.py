@@ -113,9 +113,9 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
     }
 
     if nn_name == "dimensionador":
-        item, target = ds[index]
+        item, target, mask = ds[index]
         pred = activate(model(item.unsqueeze(0).to(device)))[0].cpu()
-        out.update(_desc_fields(pred, target))
+        out.update(_desc_fields(pred, target, mask))
         out["trace_reason"] = (
             "El dimensionador describe una ventana única (el trazo que ve): no "
             "hay deslizamiento que animar. El recorrido lo hace el secuenciador.")
@@ -141,8 +141,13 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
     return out
 
 
-def _desc_fields(pred: torch.Tensor, target: torch.Tensor | None = None) -> dict:
-    """Campos de un dimensionador de descriptores: valores predichos + categoría."""
+def _desc_fields(pred: torch.Tensor, target: torch.Tensor | None = None,
+                 mask: torch.Tensor | None = None) -> dict:
+    """Campos de un dimensionador de descriptores: valores predichos + categoría.
+
+    En una ventana vacía la geometría del target está enmascarada (no se supervisó):
+    esos canales se devuelven como null.
+    """
     pcat = category_index(pred)
     out = {
         "kind": "descriptors",
@@ -155,10 +160,11 @@ def _desc_fields(pred: torch.Tensor, target: torch.Tensor | None = None) -> dict
         "margin": round(boundary_margin(pred), 4),
     }
     if target is not None:
-        tcat = category_index(target)
-        out["target_descriptors"] = {NAMES[k]: round(float(target[k]), 4)
-                                     for k in range(len(NAMES))}
-        out["target_category"] = CATEGORIES[tcat]
+        out["target_descriptors"] = {
+            NAMES[k]: (round(float(target[k]), 4)
+                       if mask is None or float(mask[k]) > 0 else None)
+            for k in range(len(NAMES))}
+        out["target_category"] = CATEGORIES[category_index(target)]
     return out
 
 

@@ -196,31 +196,37 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     su único dataset es `synthetic_strokes` (`src/swnist/data/synthstrokes.py`), que
     genera rectas/curvas (continuas/entrecortadas) sobre una ventana cuadrada (default
     5×5) con un vector de **descriptores geométricos como target**, conocido por
-    construcción. El contrato de los 6 descriptores vive en `src/swnist/descriptors.py`
+    construcción. El contrato de los 7 descriptores vive en `src/swnist/descriptors.py`
     (única fuente de verdad para dataset, modelo, entrenamiento, evaluación y UI):
     `straightness` (1=recta), `horizontal` (|cos θ|), `vertical` (|sin θ|), `angle_sin2`
-    y `angle_cos2` (el ángulo como par sin/cos de 2θ, sin salto en 0°/180°) y
-    `continuity` (1=continua). `forward` regresa los crudos (pérdida MSE por canal),
+    y `angle_cos2` (el ángulo como par sin/cos de 2θ, sin salto en 0°/180°),
+    `continuity` (1=continua) e `ink` (**cantidad de tinta** = cobertura/gris medio de
+    la ventana; 0 = vacía). `forward` regresa los crudos (pérdida MSE por canal),
     `features` = `activate(forward)` los entrega en rango natural al secuenciador
-    (`feature_dim` fijo = 6). El **conjunto de muestras se define por rangos
+    (`feature_dim` fijo = 7). El **conjunto de muestras se define por rangos
     JSON-editables** desde la UI (num_samples, curved_fraction, broken_fraction, rangos
-    de ángulo/longitud/curvatura/guiones y stroke_width). **Nunca** se genera una
-    ventana completamente vacía (siempre hay tinta), pero sí trazos cortos. Determinista
-    dado (seed, train, idx); train/test disjuntos. La métrica registrada como `val_acc`
-    es un score combinado ∈ [0,1] (media de 1−error por descriptor, ángulo como
-    distancia angular); en `metrics.jsonl` van además `angle_err_deg`,
-    `straightness_mae`, `continuity_mae`. La evaluación resume por **categoría discreta**
-    (recta/curva × continua/entrecortada, matriz 4×4) para reutilizar filtros/grilla de
-    Probar, y añade `angle_mae_deg` y `descriptor_mae` al summary; el predict del
-    dimensionador devuelve los descriptores (no una distribución de dígitos) y no tiene
-    trace (la muestra ES la ventana). El **secuenciador no cambia**: sigue clasificando
-    0–9 consumiendo las features del dimensionador (ahora interpretables) al recorrer
-    dígitos MNIST reales. Consecuencia: reglas 22 (clase vacío) y 24 (sampling raster)
-    quedan retiradas para el dimensionador, y la parte de la regla 19 sobre ventanas de
-    mnist_full/mnist_windows ya no aplica (esos datasets se eliminaron).
-    **Seguimiento pendiente:** el dimensionador ya no ve ventanas vacías en
-    entrenamiento, pero el secuenciador sí las encuentra como fondo al deslizar; un
-    descriptor de "cantidad de tinta" queda como trabajo futuro (no pedido ahora).
+    de ángulo/longitud/curvatura/guiones, stroke_width y empty_fraction). La
+    **generación de trazos nunca produce una ventana vacía** (siempre hay tinta; sí
+    trazos cortos); las únicas ventanas vacías son las de `empty_fraction` (default 0.1):
+    100% en blanco con `ink=0` y la **geometría enmascarada** de la pérdida (los 6
+    canales de `GEOMETRY` no se supervisan ahí, solo `ink`), para que el secuenciador
+    —que sí encuentra fondo al deslizar sobre un dígito— reciba la señal "aquí no hay
+    nada". El `mask` por canal es el 3er elemento de cada muestra
+    (`window, target, mask`). Determinista dado (seed, train, idx); con
+    `empty_fraction=0` nada se enmascara. La métrica registrada como `val_acc` es un
+    score combinado ∈ [0,1] (media de 1−error **sobre los canales supervisados** de cada
+    muestra); en `metrics.jsonl` van además `angle_err_deg`, `straightness_mae`,
+    `continuity_mae`, `ink_mae`. La evaluación resume por **categoría discreta** (recta/
+    curva × continua/entrecortada + **`vacío`** cuando `ink < EMPTY_INK`, matriz 5×5)
+    para reutilizar filtros/grilla de Probar, y añade `angle_mae_deg` y `descriptor_mae`
+    (sobre canales supervisados) al summary; el predict del dimensionador devuelve los
+    descriptores (los canales enmascarados del target salen como `null`), no una
+    distribución de dígitos, y no tiene trace (la muestra ES la ventana). El
+    **secuenciador no cambia** salvo que su feature_dim pasa a 7: sigue clasificando 0–9
+    consumiendo las features del dimensionador (ahora interpretables, incluida la tinta)
+    al recorrer dígitos MNIST reales. Consecuencia: reglas 22 (clase vacío) y 24
+    (sampling raster) quedan retiradas para el dimensionador, y la parte de la regla 19
+    sobre ventanas de mnist_full/mnist_windows ya no aplica (esos datasets se eliminaron).
 
 ## Arquitectura
 
@@ -231,8 +237,8 @@ Dos redes neuronales:
 - CNN que recibe una **región (ventana) de la entrada 2D** (ventana cuadrada, default
   5×5) y la **describe** con un vector de descriptores geométricos interpretables
   (ver regla 25 y `src/swnist/descriptors.py`): rectitud (recta/curva), horizontal,
-  vertical, ángulo del trazo (par sin 2θ/cos 2θ) y continuidad (continua/entrecortada).
-  Ya **no clasifica dígitos**.
+  vertical, ángulo del trazo (par sin 2θ/cos 2θ), continuidad (continua/entrecortada)
+  y cantidad de tinta (`ink`; 0 = ventana vacía). Ya **no clasifica dígitos**.
   - `forward(x)` → descriptores **crudos** (6), usados por la pérdida (MSE por canal).
   - `features(x)` = `activate(forward(x))` → los mismos descriptores en su **rango
     natural**; ese es exactamente el vector que consume el secuenciador (pipeline
@@ -269,7 +275,7 @@ requirements.txt
 scripts/run_webapp.py      ← lanza la web app (uvicorn, puerto 8000)
 src/swnist/
   repro.py                 ← semillas y captura de entorno
-  descriptors.py           ← contrato de los 6 descriptores del dimensionador (regla 25)
+  descriptors.py           ← contrato de los 7 descriptores del dimensionador (regla 25)
   nn_registry.py           ← catálogo de NNs entrenables + configs por defecto
   validation.py            ← compatibilidad NN↔dataset↔checkpoint (razones claras, 400)
   data/

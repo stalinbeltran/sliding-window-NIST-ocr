@@ -93,8 +93,9 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     num_classes = len(CATEGORIES) if is_dim else int(model.config.get("num_classes", 10))
     confusion = [[0] * num_classes for _ in range(num_classes)]
     per_step_correct = None
-    desc_err_sum = [0.0] * len(NAMES)   # MAE por descriptor (solo dimensionador)
-    angle_err_sum = 0.0
+    desc_err_sum = [0.0] * len(NAMES)   # MAE por descriptor (solo canales supervisados)
+    desc_n = [0.0] * len(NAMES)
+    angle_err_sum, angle_n = 0.0, 0.0
 
     with torch.no_grad():
         for batch in loader:
@@ -103,26 +104,32 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
                 break
             records = []
             if is_dim:
-                x, y = batch  # y: targets (B, 6)
-                pred_desc = activate(model(x.to(device))).cpu()  # (B, 6)
+                x, y, mask = batch  # y: targets (B, 7), mask: canales supervisados
+                pred_desc = activate(model(x.to(device))).cpu()  # (B, 7)
                 for i in range(pred_desc.shape[0]):
-                    p, t = pred_desc[i], y[i]
+                    p, t, mk = pred_desc[i], y[i], mask[i]
                     pcat, tcat = category_index(p), category_index(t)
                     ok = pcat == tcat
                     correct_total += ok
                     confusion[tcat][pcat] += 1
-                    ang = angle_error_deg(p[_SI], p[_CI], t[_SI], t[_CI])
-                    angle_err_sum += ang
                     errs = (p - t).abs()
                     for k in range(len(NAMES)):
-                        desc_err_sum[k] += float(errs[k])
+                        if float(mk[k]) > 0:
+                            desc_err_sum[k] += float(errs[k])
+                            desc_n[k] += 1
+                    geom = float(mk[_SI]) > 0  # geometría supervisada (ventana no vacía)
+                    ang = angle_error_deg(p[_SI], p[_CI], t[_SI], t[_CI]) if geom else None
+                    if geom:
+                        angle_err_sum += ang
+                        angle_n += 1
                     records.append({
                         "index": done + i, "label": tcat, "pred": pcat, "correct": ok,
                         "conf": round(1.0 - boundary_margin(p) / 2.0, 4),
                         "margin": round(boundary_margin(p), 4),
-                        "angle_err_deg": round(ang, 2),
+                        "angle_err_deg": round(ang, 2) if ang is not None else None,
                         "descriptors": {n: round(float(p[k]), 3) for k, n in enumerate(NAMES)},
-                        "target": {n: round(float(t[k]), 3) for k, n in enumerate(NAMES)},
+                        "target": {n: (round(float(t[k]), 3) if float(mk[k]) > 0 else None)
+                                   for k, n in enumerate(NAMES)},
                     })
                 done += pred_desc.shape[0]
             else:
@@ -160,8 +167,9 @@ def run_evaluation(eval_id: str, config: dict, eval_registry: EvaluationRegistry
     }
     if is_dim and done:
         summary["categories"] = CATEGORIES
-        summary["angle_mae_deg"] = round(angle_err_sum / done, 3)
-        summary["descriptor_mae"] = {n: round(desc_err_sum[k] / done, 4)
+        summary["angle_mae_deg"] = round(angle_err_sum / angle_n, 3) if angle_n else None
+        summary["descriptor_mae"] = {n: (round(desc_err_sum[k] / desc_n[k], 4)
+                                         if desc_n[k] else None)
                                      for k, n in enumerate(NAMES)}
     if per_step_correct is not None and done:
         summary["per_step_acc"] = [round(c / done, 5) for c in per_step_correct.tolist()]

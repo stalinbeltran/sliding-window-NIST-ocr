@@ -26,9 +26,9 @@ const fmtLabel = (v) => (v === EMPTY_LABEL ? "∅" : v);
 
 // Dimensionador de descriptores: contrato compartido con swnist.descriptors.
 const CATEGORIES = ["recta·continua", "recta·entrecortada",
-                    "curva·continua", "curva·entrecortada"];
+                    "curva·continua", "curva·entrecortada", "vacío"];
 const DESC_NAMES = ["straightness", "horizontal", "vertical",
-                    "angle_sin2", "angle_cos2", "continuity"];
+                    "angle_sin2", "angle_cos2", "continuity", "ink"];
 
 // ¿El dataset produce trazos (dimensionador de descriptores)? Se detecta por sus
 // defaults (los datasets de trazos y sus customs exponen curved_fraction).
@@ -596,9 +596,9 @@ function renderSummary(summary, totalFiltered) {
   if (!summary) { $("results-summary").textContent = "Evaluación en curso…"; return; }
   $("results-summary").textContent =
     `n=${summary.n} · acc=${summary.acc} · fallos=${summary.errors}` +
-    (summary.angle_mae_deg !== undefined ? ` · error ángulo ${summary.angle_mae_deg}°` : "") +
+    (summary.angle_mae_deg != null ? ` · error ángulo ${summary.angle_mae_deg}°` : "") +
     (summary.descriptor_mae ? ` · MAE[rectitud ${summary.descriptor_mae.straightness}, ` +
-      `continuidad ${summary.descriptor_mae.continuity}]` : "") +
+      `continuidad ${summary.descriptor_mae.continuity}, tinta ${summary.descriptor_mae.ink}]` : "") +
     (summary.per_step_acc ? ` · acc por paso: [${summary.per_step_acc.join(", ")}]` : "") +
     ` · filtro actual: ${totalFiltered} muestras`;
 }
@@ -746,12 +746,15 @@ function renderDescriptors(r) {
     const isSigned = name.startsWith("angle");     // tanh: [-1, 1]
     const toPct = (v) => (isSigned ? (v + 1) / 2 : v) * 100;
     const t = target ? target[name] : undefined;
+    // target null = canal enmascarado (ventana vacía): no tiene valor real.
+    const realTxt = t != null ? ` <span class="hint">(real ${t.toFixed(3)})</span>`
+                  : (target && name in target) ? ` <span class="hint">(—)</span>` : "";
     const row = document.createElement("div");
     row.className = "bar-row";
     row.innerHTML = `
       <span class="digit" style="width:5.5em;text-align:right">${name}</span>
       <div class="bar-bg"><div class="bar" style="width:${toPct(p).toFixed(1)}%"></div></div>
-      <span class="val">${p.toFixed(3)}${t !== undefined ? ` <span class="hint">(real ${t.toFixed(3)})</span>` : ""}</span>`;
+      <span class="val">${p.toFixed(3)}${realTxt}</span>`;
     box.appendChild(row);
   });
 }

@@ -14,7 +14,6 @@ import math
 import time
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from swnist.data.registry import build_dataset
@@ -37,43 +36,60 @@ def _angle_err_deg(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.rad2deg(d)
 
 
-def _batch_metrics(pred_act: torch.Tensor, target: torch.Tensor) -> dict:
-    """Métricas agregadas (sumas sobre el lote) para promediar por época."""
+_SCALAR = [IDX[n] for n in ("straightness", "horizontal", "vertical", "continuity", "ink")]
+
+
+def masked_mse(pred_act: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """MSE por canal supervisado (mask=1); las ventanas vacías no penalizan geometría."""
+    return ((pred_act - target) ** 2 * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def _batch_metrics(pred_act: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> dict:
+    """Sumas/contadores sobre el lote (respetando la máscara) para promediar por época."""
     e = (pred_act - target).abs()
     ang = _angle_err_deg(pred_act, target)  # [0, 90]
-    # Score por muestra: 1 - media de 5 errores (rectitud, horiz, vert, continuidad, ángulo)
-    per = 1.0 - (e[:, IDX["straightness"]] + e[:, IDX["horizontal"]]
-                 + e[:, IDX["vertical"]] + e[:, IDX["continuity"]]
-                 + ang / 90.0) / 5.0
+    e_sc, m_sc = e[:, _SCALAR], mask[:, _SCALAR]
+    m_ang = mask[:, _SI]
+    # Score por muestra: media de (1 - error) SOLO sobre los canales supervisados
+    # (una ventana vacía puntúa solo por su tinta; el ángulo cuenta como un término).
+    good = ((1.0 - e_sc) * m_sc).sum(1) + (1.0 - ang / 90.0) * m_ang
+    cnt = m_sc.sum(1) + m_ang
+    score = (good / cnt.clamp_min(1.0))
+    m_str, m_ink = mask[:, IDX["straightness"]], mask[:, IDX["ink"]]
     return {
-        "score": per.sum().item(),
-        "angle_err_deg": ang.sum().item(),
-        "straightness_mae": e[:, IDX["straightness"]].sum().item(),
-        "continuity_mae": e[:, IDX["continuity"]].sum().item(),
-        "n": target.shape[0],
+        "score": score.sum().item(), "n": target.shape[0],
+        "angle_sum": (ang * m_ang).sum().item(), "angle_n": m_ang.sum().item(),
+        "straightness_sum": (e[:, IDX["straightness"]] * m_str).sum().item(),
+        "continuity_sum": (e[:, IDX["continuity"]] * m_str).sum().item(),
+        "geom_n": m_str.sum().item(),
+        "ink_sum": (e[:, IDX["ink"]] * m_ink).sum().item(), "ink_n": m_ink.sum().item(),
     }
 
 
 @torch.no_grad()
 def evaluate(model, loader, device) -> tuple[float, float, dict]:
     model.eval()
-    total_loss, agg = 0.0, {"score": 0.0, "angle_err_deg": 0.0,
-                            "straightness_mae": 0.0, "continuity_mae": 0.0, "n": 0}
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
+    total_loss, total_terms = 0.0, 0.0
+    keys = ("score", "n", "angle_sum", "angle_n", "straightness_sum",
+            "continuity_sum", "geom_n", "ink_sum", "ink_n")
+    agg = {k: 0.0 for k in keys}
+    for x, y, m in loader:
+        x, y, m = x.to(device), y.to(device), m.to(device)
         pred_act = activate(model(x))
-        total_loss += F.mse_loss(pred_act, y, reduction="sum").item()
-        bm = _batch_metrics(pred_act, y)
-        for k in agg:
+        total_loss += ((pred_act - y) ** 2 * m).sum().item()
+        total_terms += m.sum().item()
+        bm = _batch_metrics(pred_act, y, m)
+        for k in keys:
             agg[k] += bm[k]
     n = agg["n"]
     if n == 0:  # split de val vacío (dataset minúsculo)
         return 0.0, 0.0, {}
-    loss = total_loss / (n * y.shape[1])
+    loss = total_loss / max(total_terms, 1.0)
     details = {
-        "angle_err_deg": round(agg["angle_err_deg"] / n, 4),
-        "straightness_mae": round(agg["straightness_mae"] / n, 4),
-        "continuity_mae": round(agg["continuity_mae"] / n, 4),
+        "angle_err_deg": round(agg["angle_sum"] / max(agg["angle_n"], 1), 4),
+        "straightness_mae": round(agg["straightness_sum"] / max(agg["geom_n"], 1), 4),
+        "continuity_mae": round(agg["continuity_sum"] / max(agg["geom_n"], 1), 4),
+        "ink_mae": round(agg["ink_sum"] / max(agg["ink_n"], 1), 4),
     }
     return loss, agg["score"] / n, details
 
@@ -100,18 +116,18 @@ def run_training(exp_id: str, config: dict, registry: ExperimentRegistry, stop_e
         t0 = time.time()
         model.train()
         run_loss, run_score, run_n = 0.0, 0.0, 0
-        for step, (x, y) in enumerate(train_loader, 1):
+        for step, (x, y, m) in enumerate(train_loader, 1):
             if stop_event is not None and stop_event.is_set():
                 stopped = True
                 break
-            x, y = x.to(device), y.to(device)
+            x, y, m = x.to(device), y.to(device), m.to(device)
             optimizer.zero_grad()
             pred_act = activate(model(x))
-            loss = F.mse_loss(pred_act, y)
+            loss = masked_mse(pred_act, y, m)
             loss.backward()
             optimizer.step()
 
-            bm = _batch_metrics(pred_act.detach(), y)
+            bm = _batch_metrics(pred_act.detach(), y, m)
             run_loss += loss.item() * y.shape[0]
             run_score += bm["score"]
             run_n += y.shape[0]
