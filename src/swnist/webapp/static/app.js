@@ -197,12 +197,39 @@ function onInitFromChange() {
   } catch { /* config siendo editada a mano */ }
 }
 
+function syncDimensionadorWindow(config) {
+  // model.window_size refleja SIEMPRE la entrada real del dataset (regla 13).
+  // onDatasetChange lo sincroniza al cambiar el desplegable; esto cubre editar
+  // dataset.params.window_size a mano en el JSON. Con init_from no se toca:
+  // la arquitectura la dicta el experimento origen.
+  if ($("nn-select").value !== "dimensionador") return false;
+  if (!config || config.init_from || !config.model || !config.dataset) return false;
+  const spec = DATASETS.find((d) => d.name === config.dataset.name);
+  if (!spec) return false;
+  const ws = effectiveWindow(spec, config.dataset.params || {});
+  if (config.model.window_size === ws) return false;
+  config.model.window_size = ws;
+  return true;
+}
+
+$("config-json").addEventListener("change", () => {
+  try {
+    const config = JSON.parse($("config-json").value || "{}");
+    if (syncDimensionadorWindow(config)) {
+      $("config-json").value = JSON.stringify(config, null, 2);
+    }
+  } catch { /* config siendo editada a mano */ }
+});
+
 async function startTraining() {
   const msg = $("train-msg");
   msg.textContent = "";
   let config;
   try { config = JSON.parse($("config-json").value); }
   catch (e) { msg.textContent = "JSON inválido: " + e.message; return; }
+  if (syncDimensionadorWindow(config)) {
+    $("config-json").value = JSON.stringify(config, null, 2);
+  }
   const nn = $("nn-select").value;
   // La config JSON es la fuente de verdad (el desplegable ya la mantiene en sincronía).
   if (nn === "secuenciador") config.dimensionador_experiment = $("dim-exp-select").value || null;

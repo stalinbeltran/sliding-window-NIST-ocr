@@ -47,7 +47,11 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     API responde 400 con un mensaje que explica el porqué y cómo corregirlo. Regla
     concreta: `model.window_size` del dimensionador debe coincidir con el tamaño de
     entrada efectivo del dataset (`params.window_size` merged sobre los defaults);
-    el frontend lo sincroniza solo. También se validan los valores:
+    el frontend lo sincroniza solo — también al editar `dataset.params.window_size`
+    a mano en el JSON y al pulsar Entrenar (`syncDimensionadorWindow`; bug del
+    2026-07-11: solo se sincronizaba al cambiar el desplegable de dataset, y editar
+    los params a mano dejaba `model.window_size` desfasado → 400). Con `init_from`
+    no se toca (la arquitectura la dicta el experimento origen). También se validan los valores:
     `window_size` ∈ [1, 28], `windows_per_image`/`stride` ≥ 1. El dimensionador
     de un secuenciador debe tener `window_size` < 28: con ventana 28 el recorrido
     colapsa a 1 solo paso y no hay secuenciación (400 con razón). La config del
