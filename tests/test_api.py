@@ -385,6 +385,45 @@ def test_api_secuenciador_relative_positions_on_contour(client, tmp_registry):
     assert r.status_code == 400 and "posición absoluta" in r.json()["detail"]
 
 
+def test_api_create_dataset_from_base_with_params(client, tmp_custom_store):
+    """Pestaña Datasets: generar un dataset desde MNIST con otro recorrido/grosor.
+    Los params quedan congelados en su definición y mandan al entrenar."""
+    c, manager = client
+
+    r = c.post("/api/custom-datasets", json={
+        "base": "mnist_contour_sequences", "split": "train", "limit": 32,
+        "params": {"window_size": 14, "num_steps": 8, "stroke_width": 2},
+        "name": "trazo_ns8"})
+    assert r.status_code == 200, r.json()
+    created = r.json()
+    assert created["name"] == "trazo_ns8" and created["count"] == 32
+    assert created["base"]["params"]["num_steps"] == 8
+
+    # aparece como dataset del secuenciador, con los params congelados como defaults
+    ds = next(d for d in c.get("/api/datasets", params={"nn": "secuenciador"}).json()
+              if d["name"] == "trazo_ns8")
+    assert ds["defaults"]["num_steps"] == 8 and ds["defaults"]["stroke_width"] == 2
+
+    # y se entrena con él: la config registra el recorrido del dataset (num_steps=8)
+    dim_id = _train(c, manager, cfg=dim_config("synthetic_strokes", {"window_size": 14}))
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "trazo_ns8", "params": {}}
+    seq_id = _train(c, manager, "secuenciador", cfg)
+    seq_cfg = c.get(f"/api/experiments/{seq_id}").json()["config"]
+    assert seq_cfg["dataset"]["params"]["num_steps"] == 8
+
+    # bases sin recorrido, customs y valores inválidos → 400 con razón
+    for body, reason in [
+        ({"base": "synthetic_strokes"}, "no define un recorrido"),
+        ({"base": "trazo_ns8"}, "ya es un dataset custom"),
+        ({"base": "mnist_contour_sequences", "params": {"num_steps": 1}}, "num_steps"),
+        ({"base": "mnist_contour_sequences", "limit": 0}, "límite"),
+    ]:
+        r = c.post("/api/custom-datasets", json=body)
+        assert r.status_code == 400, body
+        assert reason in r.json()["detail"], r.json()
+
+
 def test_api_evaluation_flow_and_custom_dataset(client, tmp_custom_store):
     c, manager = client
     exp_id = _train(c, manager)

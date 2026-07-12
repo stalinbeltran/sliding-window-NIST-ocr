@@ -1,0 +1,15 @@
+{
+  "experiment": "exp_20260712_154749_secuenciador",
+  "dataset": {
+    "name": "mnist_contour_sequences",
+    "params": {
+      "window_size": 5,
+      "num_steps": 12,
+      "stroke_width": 1
+    }
+  },
+  "split": "test",
+  "limit": null,
+  "batch_size": 256,
+  "seed": 42
+}
