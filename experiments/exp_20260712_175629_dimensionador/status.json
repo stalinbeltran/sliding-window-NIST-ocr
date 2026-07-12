@@ -1,13 +1,16 @@
 {
-  "status": "running",
+  "status": "completed",
   "created_at": "2026-07-12T22:56:30.046145+00:00",
   "started_at": "2026-07-12T22:56:30.061278+00:00",
-  "finished_at": null,
+  "finished_at": "2026-07-12T23:07:49.319919+00:00",
   "best": {
-    "epoch": 24,
-    "val_acc": 0.92795,
-    "val_loss": 0.01869
+    "epoch": 49,
+    "val_acc": 0.93941,
+    "val_loss": 0.01628
   },
-  "final_test": null,
+  "final_test": {
+    "loss": 0.01764,
+    "acc": 0.93806
+  },
   "error": null
 }
