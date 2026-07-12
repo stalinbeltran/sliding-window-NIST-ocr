@@ -53,6 +53,23 @@ def test_train_secuenciador_end_to_end(tmp_registry, tiny_datasets, tmp_path):
     assert len(tmp_registry.get_experiment(seq_id)["status"]["final_test"]["per_step_acc"]) == 9
 
 
+def test_train_secuenciador_contour_end_to_end(tmp_registry, tiny_datasets, tmp_path):
+    """El secuenciador entrena igual con la trayectoria que sigue el trazo."""
+    cfg_dim = dim_config("mnist_windows", {"window_size": 14, "windows_per_image": 2})
+    dim_id = tmp_registry.create_experiment("dimensionador", cfg_dim)
+    train_dim(dim_id, cfg_dim, tmp_registry)
+
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {"num_steps": 8}}
+    seq_id = tmp_registry.create_experiment("secuenciador", cfg)
+    train_seq(seq_id, cfg, tmp_registry)
+    _assert_completed(tmp_registry, seq_id, tmp_path / "backups")
+
+    # accuracy por paso con T = num_steps fijo
+    epoch = next(m for m in tmp_registry.get_metrics(seq_id) if m["type"] == "epoch")
+    assert len(epoch["val_per_step_acc"]) == 8
+
+
 def test_sequence_loss_modes():
     criterion = nn.CrossEntropyLoss()
     logits = torch.randn(4, 9, 10)
@@ -141,6 +158,63 @@ def test_eval_secuenciador_pins_training_stride(tmp_registry):
                                 "dataset": {"name": "mnist_sliding_sequences",
                                             "params": {}}}, tmp_registry)
     assert out["dataset"]["params"] == {"window_size": 14, "stride": 7}
+
+
+def test_secuenciador_config_records_effective_num_steps(tmp_registry):
+    """Con el dataset de trazo, num_steps queda fijado en la config igual que el
+    stride en el raster (la trayectoria completa debe poder leerse de la config)."""
+    from swnist.validation import validate_train_config
+
+    dim_id = _fake_trained(tmp_registry, "dimensionador",
+                           dim_config("mnist_windows", {"window_size": 14}))
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {}}
+    final = validate_train_config("secuenciador", cfg, tmp_registry)
+    assert final["dataset"]["params"] == {"window_size": 14, "num_steps": 12}
+
+
+def test_eval_secuenciador_pins_training_num_steps(tmp_registry):
+    """Evaluar con otro num_steps → error con razón; sin él se fija el efectivo."""
+    from swnist.validation import validate_eval_config
+
+    dim_id = _fake_trained(tmp_registry, "dimensionador",
+                           dim_config("mnist_windows", {"window_size": 14}))
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {"num_steps": 8}}
+    seq_id = _fake_trained(tmp_registry, "secuenciador", cfg)
+
+    with pytest.raises(ValueError, match="num_steps=8"):
+        validate_eval_config({"experiment": seq_id, "split": "test",
+                              "dataset": {"name": "mnist_contour_sequences",
+                                          "params": {"num_steps": 20}}}, tmp_registry)
+
+    out = validate_eval_config({"experiment": seq_id, "split": "test",
+                                "dataset": {"name": "mnist_contour_sequences",
+                                            "params": {}}}, tmp_registry)
+    assert out["dataset"]["params"] == {"window_size": 14, "num_steps": 8}
+
+
+def test_eval_secuenciador_rejects_other_trajectory_type(tmp_registry):
+    """Un secuenciador entrenado con recorrido raster no se evalúa con el de trazo
+    (y viceversa): la trayectoria es entrada de la red."""
+    from swnist.validation import validate_eval_config
+
+    dim_id = _fake_trained(tmp_registry, "dimensionador",
+                           dim_config("mnist_windows", {"window_size": 14}))
+    raster_id = _fake_trained(tmp_registry, "secuenciador", seq_config(dim_id))  # stride 7
+
+    with pytest.raises(ValueError, match="otro tipo de recorrido"):
+        validate_eval_config({"experiment": raster_id, "split": "test",
+                              "dataset": {"name": "mnist_contour_sequences",
+                                          "params": {}}}, tmp_registry)
+
+    cfg = seq_config(dim_id)
+    cfg["dataset"] = {"name": "mnist_contour_sequences", "params": {"num_steps": 8}}
+    contour_id = _fake_trained(tmp_registry, "secuenciador", cfg)
+    with pytest.raises(ValueError, match="otro tipo de recorrido"):
+        validate_eval_config({"experiment": contour_id, "split": "test",
+                              "dataset": {"name": "mnist_sliding_sequences",
+                                          "params": {}}}, tmp_registry)
 
 
 def test_retrain_continues_from_checkpoint(tmp_registry, tiny_datasets, tmp_path):

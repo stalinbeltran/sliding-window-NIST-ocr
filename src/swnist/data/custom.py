@@ -47,6 +47,11 @@ class CustomSubset(Dataset):
     def display_item(self, idx):
         return self.base.display_item(self.indices[idx])
 
+    def trajectory(self, idx):
+        """Recorrido de la ventana, delegado al base (solo lo tienen los
+        datasets de secuencias)."""
+        return self.base.trajectory(self.indices[idx])
+
 
 class CustomDatasetStore:
     """CRUD de datasets custom sobre `custom_datasets/` (root parametrizable en tests)."""

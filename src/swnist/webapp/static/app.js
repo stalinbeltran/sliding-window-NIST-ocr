@@ -178,12 +178,16 @@ function onInitFromChange() {
       if (exp) {
         config.model = JSON.parse(JSON.stringify(exp.config.model));
         // Secuenciador: por defecto se continúa con la misma trayectoria (mismo
-        // stride) que el experimento origen; editable en la config si se quiere
-        // re-entrenar con otra.
-        const origStride = exp.config.dataset?.params?.stride;
-        if ($("nn-select").value === "secuenciador" && origStride !== undefined &&
-            config.dataset?.params) {
-          config.dataset.params.stride = origStride;
+        // stride/num_steps) que el experimento origen; editable en la config si
+        // se quiere re-entrenar con otra. Solo se copian los params que el
+        // dataset seleccionado acepta (raster usa stride, contour num_steps).
+        if ($("nn-select").value === "secuenciador" && config.dataset?.params) {
+          for (const k of ["stride", "num_steps"]) {
+            const orig = exp.config.dataset?.params?.[k];
+            if (orig !== undefined && k in config.dataset.params) {
+              config.dataset.params[k] = orig;
+            }
+          }
         }
       }
     } else {
@@ -369,8 +373,10 @@ function testDatasetParams() {
     // fija el efectivo del entrenamiento en la config de la evaluación.
     if (tp.window_size !== undefined) params.window_size = tp.window_size;
     else delete params.window_size;
-    if (tp.stride !== undefined) params.stride = tp.stride;
-    else delete params.stride;
+    for (const k of ["stride", "num_steps"]) {
+      if (tp[k] !== undefined && k in params) params[k] = tp[k];
+      else delete params[k];
+    }
   }
   return params;
 }
@@ -429,7 +435,8 @@ async function refreshEvals() {
       <td class="hint">${ev.config.experiment}</td>
       <td class="hint">${ev.config.dataset.name} (${ev.config.split}${ev.config.limit ? ", n≤" + ev.config.limit : ""})${
         ev.config.dataset.params?.window_size !== undefined ? `<br>ventana ${ev.config.dataset.params.window_size}` : ""}${
-        ev.config.dataset.params?.stride !== undefined ? ` · stride ${ev.config.dataset.params.stride}` : ""}</td>
+        ev.config.dataset.params?.stride !== undefined ? ` · stride ${ev.config.dataset.params.stride}` : ""}${
+        ev.config.dataset.params?.num_steps !== undefined ? ` · num_steps ${ev.config.dataset.params.num_steps}` : ""}</td>
       <td class="status-${st}">${st}${ev.running ? ` ⏳ ${prog ? prog.done + "/" + prog.total : ""}` : ""}</td>
       <td>${acc ?? "—"}</td>
       <td>
@@ -743,8 +750,14 @@ async function initSlidePanel() {
 function onSlideDatasetChange() {
   const ds = SLIDE_DS.find((d) => d.name === $("slide-dataset").value);
   if (!ds) return;
+  // Datasets que siguen el trazo usan num_steps; los demás, stride (propio o
+  // el raster hipotético del trace).
+  const contour = ds.defaults.num_steps != null;
   $("slide-ws").value = ds.defaults.window_size ?? 28;
-  $("slide-stride").value = ds.defaults.stride ?? 7;
+  $("slide-stride").value = contour ? "" : (ds.defaults.stride ?? 7);
+  $("slide-stride").disabled = contour;
+  $("slide-steps").value = contour ? ds.defaults.num_steps : "";
+  $("slide-steps").disabled = !contour;
   refreshSlide();
 }
 
@@ -757,6 +770,10 @@ async function refreshSlide() {
     const q = new URLSearchParams();
     if ($("slide-ws").value) q.set("window_size", $("slide-ws").value);
     if ($("slide-stride").value) q.set("stride", $("slide-stride").value);
+    if ($("slide-steps").value) q.set("num_steps", $("slide-steps").value);
+    // Para los datasets que siguen el trazo el recorrido es de la muestra elegida
+    q.set("split", $("slide-split").value);
+    q.set("index", Math.max(0, parseInt($("slide-index").value, 10) || 0));
     const r = await api(`/api/datasets/${name}/slide?` + q);
     let imgEl = null;
     if (r.full_image) {
@@ -770,13 +787,17 @@ async function refreshSlide() {
     SLIDE = { ...r, imgEl };
     slideIdx = 0;
     const perAxis = r.axis_coords.length;
-    info.innerHTML =
-      `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
-      `${r.window_size}×${r.window_size}, stride ${r.stride}` +
-      `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
-      `<br>stride propio del dataset: ${r.dataset_uses_stride
-        ? (r.effective_defaults.stride ?? "—") : "no tiene (ventanas aleatorias)"}` +
-      (r.note ? `<br><br>${r.note}` : "");
+    info.innerHTML = r.follows_content
+      ? `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
+        `${r.window_size}×${r.window_size}, num_steps ${r.num_steps}` +
+        `<br>recorrido derivado del trazo de la muestra` +
+        (r.note ? `<br><br>${r.note}` : "")
+      : `<b>${r.steps} paso${r.steps === 1 ? "" : "s"}</b> — ventana ` +
+        `${r.window_size}×${r.window_size}, stride ${r.stride}` +
+        `<br>posiciones por eje (${perAxis}): [${r.axis_coords.join(", ")}]` +
+        `<br>stride propio del dataset: ${r.dataset_uses_stride
+          ? (r.effective_defaults.stride ?? "—") : "no tiene (ventanas aleatorias)"}` +
+        (r.note ? `<br><br>${r.note}` : "");
     renderSlideStep();
     startSlide();
   } catch (e) {
@@ -842,7 +863,7 @@ function stopSlide() {
 }
 
 $("slide-dataset").addEventListener("change", onSlideDatasetChange);
-["slide-ws", "slide-stride", "slide-split", "slide-index"].forEach((id) =>
+["slide-ws", "slide-stride", "slide-steps", "slide-split", "slide-index"].forEach((id) =>
   $(id).addEventListener("change", refreshSlide));
 $("slide-play").addEventListener("click", () => (slideTimer ? stopSlide() : startSlide()));
 $("slide-prev").addEventListener("click", () => {

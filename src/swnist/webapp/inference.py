@@ -137,14 +137,14 @@ def predict_sample(exp_registry: ExperimentRegistry, exp_id: str, dataset_cfg: d
         probs_seq = F.softmax(logits_seq[0], dim=-1)  # (T, C)
         out.update(_pred_fields(probs_seq[-1]))
         ws = int(dim_model.config["window_size"])
-        # Posiciones en píxeles reconstruidas del dataset de secuencias
-        positions = getattr(ds, "positions", None)
-        if positions is None and hasattr(ds, "base"):  # CustomSubset
-            positions = getattr(ds.base, "positions", None)
+        # Recorrido real de la muestra: fijo (raster) o derivado del trazo (contour)
+        traj = getattr(ds, "trajectory", None)
+        positions = traj(index) if traj is not None else []
         out["trace"] = {
             "window_size": ws,
             "stride": ds_params.get("stride"),
-            "positions": [list(p) for p in (positions or [])],
+            "num_steps": ds_params.get("num_steps"),
+            "positions": [list(p) for p in positions],
             "steps": [_step_fields(p) for p in probs_seq],
             "kind": "secuenciador",
         }

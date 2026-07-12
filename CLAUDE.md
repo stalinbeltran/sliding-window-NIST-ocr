@@ -109,6 +109,23 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     de píxeles de una muestra; el trace de predict incluye el stride efectivo. Los
     datasets de ventanas aleatorias (mnist_full/mnist_windows) no tienen stride propio.
 
+21. **Trayectoria guiada por el contenido** (2026-07-11, branch
+    `feature/trayectoria-por-contenido`): `mnist_contour_sequences` hace que la ventana
+    siga la 'forma' del carácter en vez de escanear el área en raster: tinta binarizada
+    → esqueleto de ~1 px (Zhang-Suen, numpy puro) → camino ordenado (vecino más cercano
+    desde un extremo del trazo) → remuestreo a `num_steps` posiciones fijas
+    (`src/swnist/data/trajectory.py`). T = `num_steps` es constante (batching y accuracy
+    por paso lo requieren); la trayectoria depende de cada muestra pero es determinista
+    (sin RNG; cacheada por índice en el dataset). `num_steps` es un parámetro de
+    trayectoria como el stride (regla 20): se fija en la config al entrenar y
+    evaluaciones/predict lo reutilizan obligatoriamente; además, evaluar un secuenciador
+    con un dataset de OTRO tipo de recorrido (raster↔trazo) es 400 con razón
+    (`TRAJECTORY_KEYS` en `validation.py`). Los datasets de secuencias exponen
+    `trajectory(idx)` (posiciones (top, left) de la muestra; `CustomSubset` delega) y lo
+    usan el trace de predict y `GET /api/datasets/<name>/slide` (que acepta
+    `split`/`index`/`num_steps` para los datasets de trazo, porque el recorrido cambia
+    con la muestra; el visualizador de la pestaña Datasets lo anima igual).
+
 ## Arquitectura
 
 Dos redes neuronales:

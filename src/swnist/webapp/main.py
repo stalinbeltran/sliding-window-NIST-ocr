@@ -112,18 +112,44 @@ def api_datasets(nn: str | None = None):
 
 @app.get("/api/datasets/{name}/slide")
 def api_dataset_slide(name: str, window_size: int | None = None,
-                      stride: int | None = None):
+                      stride: int | None = None, num_steps: int | None = None,
+                      split: str = "train", index: int = 0, seed: int = 42):
     """Recorrido de la ventana deslizante de un dataset, para visualizarlo y
-    verificar el stride sin tener que lanzar una prueba. window_size/stride
-    sobrescriben los efectivos del dataset (solo para la visualización)."""
+    verificar el stride/num_steps sin tener que lanzar una prueba.
+    window_size/stride/num_steps sobrescriben los efectivos del dataset (solo
+    para la visualización). En los datasets que siguen el trazo (num_steps) el
+    recorrido depende de la muestra: se calcula sobre (split, index)."""
     info = _400(data_registry.dataset_info, name)
     eff = _400(data_registry.effective_params, name, {})
     uses_stride = "stride" in eff
     ws = int(window_size) if window_size is not None else int(eff.get("window_size", IMAGE_SIZE))
-    st = int(stride) if stride is not None else int(eff.get("stride", 7))
     if not 1 <= ws <= IMAGE_SIZE:
         raise HTTPException(400, f"window_size debe estar entre 1 y {IMAGE_SIZE}; "
                                  f"recibido: {ws}.")
+
+    if "num_steps" in eff:
+        # Trayectoria por el trazo: el recorrido es de la muestra concreta.
+        ns = int(num_steps) if num_steps is not None else int(eff["num_steps"])
+        if ns < 2:
+            raise HTTPException(400, f"num_steps debe ser ≥ 2; recibido: {ns}.")
+        ds = _400(inference.get_dataset, name,
+                  {"window_size": ws, "num_steps": ns}, split == "train", seed)
+        if not 0 <= index < len(ds):
+            raise HTTPException(400, f"Índice fuera de rango: {index} (el dataset "
+                                     f"tiene {len(ds)} muestras).")
+        positions = ds.trajectory(index)
+        return {
+            "name": name, "image_size": IMAGE_SIZE, "window_size": ws,
+            "stride": None, "num_steps": ns, "dataset_uses_stride": False,
+            "follows_content": True, "effective_defaults": eff,
+            "full_image": True, "steps": len(positions), "axis_coords": [],
+            "positions": [list(p) for p in positions],
+            "note": "La trayectoria sigue el trazo del carácter (esqueleto → "
+                    "camino → num_steps posiciones), así que cambia con cada "
+                    "muestra: elige otra en Split / muestra para compararlas.",
+        }
+
+    st = int(stride) if stride is not None else int(eff.get("stride", 7))
     if st < 1:
         raise HTTPException(400, f"stride debe ser ≥ 1; recibido: {st}.")
     positions = grid_positions(IMAGE_SIZE, ws, st) if ws < IMAGE_SIZE else [(0, 0)]
@@ -145,7 +171,8 @@ def api_dataset_slide(name: str, window_size: int | None = None,
                      f"consecutivas.")
     return {
         "name": name, "image_size": IMAGE_SIZE, "window_size": ws, "stride": st,
-        "dataset_uses_stride": uses_stride, "effective_defaults": eff,
+        "num_steps": None, "dataset_uses_stride": uses_stride,
+        "follows_content": False, "effective_defaults": eff,
         "full_image": info.get("full_image", True),
         "steps": len(positions), "axis_coords": axis,
         "positions": [list(p) for p in positions],

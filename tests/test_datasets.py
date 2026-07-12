@@ -3,8 +3,11 @@
 import pytest
 import torch
 
-from swnist.data.datasets import IMAGE_SIZE, MnistFull, MnistSlidingSequences, MnistWindows
+from swnist.data.datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
+                                  MnistSlidingSequences, MnistWindows)
 from swnist.data.registry import build_dataset, effective_window_size, list_datasets
+from swnist.data.trajectory import (contour_positions, ink_mask, order_path,
+                                    resample_path, skeletonize)
 from swnist.data.windows import extract_window, grid_positions, normalize_position
 
 
@@ -76,12 +79,86 @@ def test_mnist_sliding_sequences_item():
     assert 0 <= label <= 9
 
 
+def _synthetic_stroke() -> torch.Tensor:
+    """Imagen normalizada con un trazo vertical de 3 px de grosor (col 13-15)."""
+    raw = torch.zeros(1, IMAGE_SIZE, IMAGE_SIZE)
+    raw[:, 4:24, 13:16] = 1.0
+    return (raw - 0.1307) / 0.3081
+
+
+def test_skeletonize_thins_stroke():
+    mask = ink_mask(_synthetic_stroke())
+    skel = skeletonize(mask)
+    assert skel.sum() > 0
+    assert skel.sum() < mask.sum()  # más delgado que el trazo original
+    assert (mask | ~skel).all()     # el esqueleto vive dentro de la tinta
+    # ~1 px de grosor: ninguna fila del trazo conserva sus 3 columnas
+    assert all(skel[r].sum() <= 2 for r in range(4, 24))
+
+
+def test_order_path_follows_stroke():
+    path = order_path(skeletonize(ink_mask(_synthetic_stroke())))
+    rows = [r for r, _ in path]
+    # el trazo vertical se recorre de un extremo al otro, sin saltos hacia atrás
+    assert rows == sorted(rows) or rows == sorted(rows, reverse=True)
+
+
+def test_resample_path_fixed_length():
+    path = [(0, 0), (10, 0)]
+    out = resample_path(path, 6)
+    assert len(out) == 6
+    assert out[0] == (0, 0) and out[-1] == (10, 0)
+    assert resample_path([(3, 3)], 4) == [(3, 3)] * 4
+    assert resample_path([], 4) == []
+
+
+def test_contour_positions_on_ink():
+    img = _synthetic_stroke()
+    pos = contour_positions(img, window_size=9, num_steps=8)
+    assert len(pos) == 8
+    mask = ink_mask(img)
+    for top, left in pos:
+        assert 0 <= top <= IMAGE_SIZE - 9 and 0 <= left <= IMAGE_SIZE - 9
+        # cada ventana contiene tinta (la trayectoria sigue el trazo)
+        assert mask[top:top + 9, left:left + 9].any()
+    # imagen sin tinta: caso degenerado, ventana centrada
+    blank = torch.full((1, IMAGE_SIZE, IMAGE_SIZE), (0.0 - 0.1307) / 0.3081)
+    assert contour_positions(blank, 9, 4) == [(9, 9)] * 4
+
+
+def test_mnist_contour_sequences_item():
+    ds = MnistContourSequences(train=True, window_size=14, num_steps=10)
+    windows, positions, label = ds[0]
+    assert ds.sequence_length == 10
+    assert windows.shape == (10, 1, 14, 14)
+    assert positions.shape == (10, 2)
+    assert positions.min() >= 0 and positions.max() <= 1
+    assert 0 <= label <= 9
+    full, label2 = ds.display_item(0)
+    assert full.shape == (1, 28, 28) and label == label2
+
+
+def test_mnist_contour_sequences_deterministic_and_per_sample():
+    ds1 = MnistContourSequences(train=True, window_size=14, num_steps=10)
+    ds2 = MnistContourSequences(train=True, window_size=14, num_steps=10)
+    w1, p1, _ = ds1[0]
+    w2, p2, _ = ds2[0]
+    assert torch.equal(w1, w2) and torch.equal(p1, p2)  # determinista (sin RNG)
+    assert ds1.trajectory(0) == ds2.trajectory(0)
+    # la trayectoria depende del carácter: dos muestras distintas difieren
+    assert ds1.trajectory(0) != ds1.trajectory(1)
+    # las ventanas de una muestra real contienen tinta en su mayoría
+    mask = ink_mask(ds1.base[0][0])
+    hits = sum(mask[t:t + 14, l:l + 14].any() for t, l in ds1.trajectory(0))
+    assert hits == len(ds1.trajectory(0))
+
+
 def test_list_datasets_filters_by_nn():
     # Solo los builtin: la lista real puede incluir datasets custom del usuario.
     for d in list_datasets("dimensionador"):
         assert "dimensionador" in d["compatible_with"]
     seq = [d["name"] for d in list_datasets("secuenciador") if not d["custom"]]
-    assert seq == ["mnist_sliding_sequences"]
+    assert seq == ["mnist_sliding_sequences", "mnist_contour_sequences"]
 
 
 def test_build_dataset_unknown_name():
@@ -102,6 +179,13 @@ def test_build_dataset_rejects_invalid_param_values():
         build_dataset("mnist_windows", {"window_size": 29}, train=True, seed=42)
     with pytest.raises(ValueError, match="windows_per_image debe ser"):
         build_dataset("mnist_full", {"windows_per_image": 0}, train=True, seed=42)
+    with pytest.raises(ValueError, match="num_steps debe ser"):
+        build_dataset("mnist_contour_sequences", {"num_steps": 1}, train=True, seed=42)
+    # cada dataset de secuencias acepta solo su propio parámetro de trayectoria
+    with pytest.raises(ValueError, match="Parámetros no válidos"):
+        build_dataset("mnist_contour_sequences", {"stride": 7}, train=True, seed=42)
+    with pytest.raises(ValueError, match="Parámetros no válidos"):
+        build_dataset("mnist_sliding_sequences", {"num_steps": 8}, train=True, seed=42)
 
 
 def test_build_dataset_valid_params():

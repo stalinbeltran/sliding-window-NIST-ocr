@@ -6,7 +6,8 @@ con la NN seleccionada. Los datasets custom (subconjuntos filtrados, ver
 """
 
 from .custom import CustomDatasetStore, CustomSubset
-from .datasets import IMAGE_SIZE, MnistFull, MnistSlidingSequences, MnistWindows
+from .datasets import (IMAGE_SIZE, MnistContourSequences, MnistFull,
+                       MnistSlidingSequences, MnistWindows)
 
 DATASETS = {
     "mnist_full": {
@@ -29,6 +30,15 @@ DATASETS = {
         "compatible_with": ["secuenciador"],
         "builder": MnistSlidingSequences,
         "defaults": {"window_size": 14, "stride": 7},
+        "full_image": True,
+    },
+    "mnist_contour_sequences": {
+        "description": "Secuencias de ventanas que siguen el trazo del carácter "
+                       "(esqueleto → camino → num_steps posiciones) con posición "
+                       "(x, y) por paso; la trayectoria depende de cada muestra.",
+        "compatible_with": ["secuenciador"],
+        "builder": MnistContourSequences,
+        "defaults": {"window_size": 14, "num_steps": 12},
         "full_image": True,
     },
 }
@@ -108,6 +118,11 @@ def validate_dataset_params(name: str, params: dict) -> None:
         v = params.get(key)
         if v is not None and (not isinstance(v, int) or v < 1):
             raise ValueError(f"{key} debe ser un entero ≥ 1; recibido: {v!r}.")
+    ns = params.get("num_steps")
+    if ns is not None and (not isinstance(ns, int) or ns < 2):
+        raise ValueError(
+            f"num_steps debe ser un entero ≥ 2 (con un solo paso no hay secuencia "
+            f"que recorrer); recibido: {ns!r}.")
     if name not in DATASETS and "windows_per_image" in params and \
             params["windows_per_image"] != base_params.get("windows_per_image"):
         raise ValueError(

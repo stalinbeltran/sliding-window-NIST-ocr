@@ -45,7 +45,8 @@ def test_api_datasets_filtered(client):
     for d in c.get("/api/datasets", params={"nn": "dimensionador"}).json():
         assert "dimensionador" in d["compatible_with"]
     seq = c.get("/api/datasets", params={"nn": "secuenciador"}).json()
-    assert [d["name"] for d in seq] == ["mnist_sliding_sequences"]
+    assert [d["name"] for d in seq] == ["mnist_sliding_sequences",
+                                        "mnist_contour_sequences"]
 
 
 def test_api_train_unknown_nn(client):
@@ -215,6 +216,18 @@ def test_api_dataset_slide(client):
     b = c.get("/api/datasets/mnist_full/slide").json()
     assert not b["dataset_uses_stride"] and "aleatorias" in b["note"]
     assert b["steps"] == 1  # ventana 28 = imagen completa
+
+    # dataset de trazo: el recorrido sigue el carácter y depende de la muestra
+    b = c.get("/api/datasets/mnist_contour_sequences/slide").json()
+    assert b["follows_content"] and b["num_steps"] == 12
+    assert b["steps"] == len(b["positions"]) == 12 and b["stride"] is None
+    b2 = c.get("/api/datasets/mnist_contour_sequences/slide",
+               params={"index": 1}).json()
+    assert b2["positions"] != b["positions"]  # otra muestra, otro recorrido
+    assert c.get("/api/datasets/mnist_contour_sequences/slide",
+                 params={"num_steps": 1}).status_code == 400
+    assert c.get("/api/datasets/mnist_contour_sequences/slide",
+                 params={"index": 10 ** 9}).status_code == 400
 
     assert c.get("/api/datasets/mnist_sliding_sequences/slide",
                  params={"stride": 0}).status_code == 400
