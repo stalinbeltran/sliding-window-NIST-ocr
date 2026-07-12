@@ -852,7 +852,11 @@ async function initSlidePanel() {
   const prev = sel.value;
   sel.innerHTML = SLIDE_DS.map((d) =>
     `<option value="${d.name}">${d.name}${d.custom ? " (custom)" : ""}</option>`).join("");
-  if (prev && SLIDE_DS.some((d) => d.name === prev)) { sel.value = prev; return; }
+  if (prev && SLIDE_DS.some((d) => d.name === prev)) {
+    sel.value = prev;
+    syncSlideCreate();
+    return;
+  }
   onSlideDatasetChange();
 }
 
@@ -868,7 +872,76 @@ function onSlideDatasetChange() {
   $("slide-steps").value = contour ? ds.defaults.num_steps : "";
   $("slide-steps").disabled = !contour;
   $("slide-stroke").value = ds.defaults.stroke_width ?? 0;
+  syncSlideCreate();
   refreshSlide();
+}
+
+// ---------- crear un dataset con los params del visualizador ----------
+
+// Solo tiene sentido sobre un dataset base de secuencias: es el que define un
+// recorrido que congelar. Un custom ya ES un dataset guardado (se parte de su base)
+// y los trazos sintéticos del dimensionador se configuran al entrenar.
+function slideCreatableReason(ds) {
+  if (!ds) return "Elige un dataset.";
+  if (ds.custom)
+    return `${ds.name} ya es un dataset guardado: para generar otra secuencia elige ` +
+           `su dataset base (${ds.base.name}) y ajusta los parámetros.`;
+  if (!ds.compatible_with.includes("secuenciador"))
+    return `${ds.name} no define un recorrido que congelar (sus muestras no son ` +
+           `secuencias). Los trazos sintéticos del dimensionador se configuran en Entrenar.`;
+  return null;
+}
+
+function slideParams() {
+  const num = (id) => ($(id).value === "" || $(id).disabled
+    ? null : parseInt($(id).value, 10));
+  const params = {stroke_width: Math.max(0, parseInt($("slide-stroke").value, 10) || 0)};
+  for (const [id, key] of [["slide-ws", "window_size"], ["slide-stride", "stride"],
+                           ["slide-steps", "num_steps"]]) {
+    const v = num(id);
+    if (v != null && !Number.isNaN(v)) params[key] = v;
+  }
+  return params;
+}
+
+function suggestedName(ds) {
+  const p = slideParams();
+  const traj = p.num_steps != null ? `ns${p.num_steps}` : `st${p.stride}`;
+  return `${ds.name}_ws${p.window_size}_${traj}_sw${p.stroke_width}`;
+}
+
+function syncSlideCreate() {
+  const ds = SLIDE_DS.find((d) => d.name === $("slide-dataset").value);
+  const reason = slideCreatableReason(ds);
+  $("slide-create").disabled = !!reason;
+  $("slide-new-name").placeholder = reason ? "" : suggestedName(ds);
+  $("slide-create-msg").textContent = reason || "";
+}
+
+async function createSlideDataset() {
+  const ds = SLIDE_DS.find((d) => d.name === $("slide-dataset").value);
+  const msg = $("slide-create-msg");
+  const limit = $("slide-new-limit").value;
+  const btn = $("slide-create");
+  btn.disabled = true;
+  msg.textContent = "Creando…";
+  try {
+    const created = await post("/api/custom-datasets", {
+      base: ds.name,
+      params: slideParams(),
+      split: $("slide-split").value,
+      limit: limit === "" ? null : parseInt(limit, 10),
+      name: $("slide-new-name").value.trim() || suggestedName(ds),
+    });
+    $("slide-new-name").value = "";
+    await refreshDatasetsTab();
+    $("slide-create-msg").textContent =
+      `Creado ${created.name}: ${created.count} muestras. ${created.description}`;
+  } catch (e) {
+    msg.textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function refreshSlide() {
@@ -984,7 +1057,8 @@ function stopSlide() {
 
 $("slide-dataset").addEventListener("change", onSlideDatasetChange);
 ["slide-ws", "slide-stride", "slide-steps", "slide-stroke", "slide-split", "slide-index"].forEach((id) =>
-  $(id).addEventListener("change", refreshSlide));
+  $(id).addEventListener("change", () => { syncSlideCreate(); refreshSlide(); }));
+$("slide-create").addEventListener("click", createSlideDataset);
 $("slide-play").addEventListener("click", () => (slideTimer ? stopSlide() : startSlide()));
 $("slide-prev").addEventListener("click", () => {
   stopSlide();

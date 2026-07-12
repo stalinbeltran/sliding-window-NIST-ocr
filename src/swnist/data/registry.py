@@ -173,6 +173,59 @@ def effective_window_size(name: str, params: dict) -> int:
     return int(effective_params(name, params).get("window_size", IMAGE_SIZE))
 
 
+def _generated_description(base: str, eff: dict, split: str, count: int) -> str:
+    shown = [f"{k}={eff[k]}" for k in ("window_size", "num_steps", "stride", "stroke_width")
+             if eff.get(k) is not None]
+    return (f"Generado desde {base} ({split}, {count} muestras) con "
+            f"{', '.join(shown)}.")
+
+
+def create_custom_from_base(base: str, params: dict, split: str = "train",
+                            seed: int = 42, limit: int | None = None,
+                            name: str | None = None, description: str = "") -> dict:
+    """Dataset custom generado desde un dataset base de secuencias (MNIST).
+
+    A diferencia de los customs nacidos de un filtro de evaluación (un subconjunto de
+    muestras interesantes), aquí las muestras son el split entero —o sus primeras
+    `limit`— y lo que define el dataset son los PARAMS: la trayectoria
+    (num_steps/stride), la ventana y el grosor de trazo quedan congelados (se guardan
+    los efectivos, no los del formulario) en su definición. Eso es justo lo que hace
+    falta para entrenar y evaluar siempre con el mismo recorrido (reglas 20 y 21).
+    """
+    if base not in DATASETS:
+        if custom_store.exists(base):
+            raise ValueError(
+                f"{base!r} ya es un dataset custom (un dataset guardado): para generar "
+                f"otra secuencia parte de su dataset base ({custom_store.get(base)['base']['name']!r}) "
+                f"con los parámetros que quieras.")
+        raise ValueError(f"Dataset base desconocido: {base!r}.")
+    spec = DATASETS[base]
+    if "secuenciador" not in spec["compatible_with"]:
+        raise ValueError(
+            f"{base!r} no define un recorrido: solo los datasets de secuencias "
+            f"(los compatibles con el secuenciador) generan una trayectoria que "
+            f"tenga sentido congelar. Los trazos sintéticos del dimensionador se "
+            f"configuran con sus rangos en la config del entrenamiento.")
+    if split not in ("train", "test"):
+        raise ValueError(f"Split inválido: {split!r} (usa 'train' o 'test').")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)
+                              or limit < 1):
+        raise ValueError("El límite debe ser un entero positivo "
+                         "(déjalo vacío para incluir todas las muestras del split).")
+    validate_dataset_params(base, params)
+
+    eff = effective_params(base, params)
+    ds = spec["builder"](train=(split == "train"), seed=seed, **eff)
+    count = len(ds) if limit is None else min(int(limit), len(ds))
+    return custom_store.create(
+        {"name": base, "params": eff, "split": split, "seed": seed},
+        list(range(count)),
+        name,
+        description or _generated_description(base, eff, split, count),
+        {"generated_from": base, "limit": limit},
+    )
+
+
 def build_dataset(name: str, params: dict, train: bool, seed: int):
     if name in DATASETS:
         validate_dataset_params(name, params)

@@ -201,9 +201,11 @@
       <h2>Visualizar deslizamiento (window_size / stride / num_steps / stroke_width)</h2>
       <p class="hint">Anima el recorrido de la ventana sobre el mapa de píxeles de una
         muestra del dataset. Los valores iniciales son los efectivos del dataset y se
-        pueden editar aquí para explorar (esto no cambia el dataset: la trayectoria real
-        de un entrenamiento se define en su config, y las pruebas de un secuenciador usan
-        obligatoriamente la de su entrenamiento). En los datasets que siguen el trazo
+        pueden editar aquí para explorar (editarlos no cambia el dataset elegido: la
+        trayectoria real de un entrenamiento se define en su config, y las pruebas de un
+        secuenciador usan obligatoriamente la de su entrenamiento). Si te gusta lo que
+        ves, guárdalo como un dataset nuevo con el formulario de más abajo. En los
+        datasets que siguen el trazo
         (num_steps) el recorrido depende de la muestra elegida. stroke_width &gt; 0
         redibuja el carácter con trazo de grosor uniforme (previsualízalo aquí; para
         entrenar con el dataset uniformizado pon el mismo valor en
@@ -254,6 +256,27 @@
           <p id="slide-info" class="hint">Elige un dataset…</p>
         </div>
       </div>
+
+      <h3 style="margin-top:1rem">Crear un dataset con estos parámetros</h3>
+      <p class="hint">Guarda lo que estás viendo como un dataset nuevo: las mismas
+        imágenes de MNIST, pero con este recorrido (window_size, num_steps/stride) y
+        este grosor de trazo <strong>congelados</strong>. Aparecerá en Entrenar y en
+        Probar como cualquier otro dataset, y su recorrido será el que use el
+        secuenciador que entrenes con él.</p>
+      <div class="row">
+        <div>
+          <label for="slide-new-name">Nombre</label>
+          <input id="slide-new-name" type="text" placeholder="(automático)">
+        </div>
+        <div>
+          <label for="slide-new-limit" title="vacío = todas las muestras del split">Límite de muestras</label>
+          <input id="slide-new-limit" type="number" min="1" placeholder="todas">
+        </div>
+        <div style="align-self:end">
+          <button id="slide-create">Crear dataset</button>
+        </div>
+      </div>
+      <p id="slide-create-msg" class="hint"></p>
     </section>
 
     <section class="panel">
@@ -265,9 +288,10 @@
     </section>
 
     <section class="panel">
-      <h2>Datasets custom (filtrados)</h2>
-      <p class="hint">Creados desde la pestaña Probar (guardar filtro). Se pueden usar
-        para entrenar y evaluar igual que los datasets base.</p>
+      <h2>Datasets custom (guardados)</h2>
+      <p class="hint">Dos orígenes: un filtro de una evaluación (pestaña Probar) o los
+        parámetros del visualizador de aquí arriba (mismas imágenes, otro recorrido).
+        Se usan para entrenar y evaluar igual que los datasets base.</p>
       <table id="custom-ds-table">
         <thead><tr><th>Nombre</th><th>Base</th><th>Split</th><th>Muestras</th><th>Descripción</th><th>Acciones</th></tr></thead>
         <tbody></tbody>

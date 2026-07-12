@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from swnist.data import registry as data_registry
 from swnist.data.custom import slugify
@@ -82,6 +82,18 @@ class SaveDatasetRequest(BaseModel):
 class CustomDatasetPatch(BaseModel):
     new_name: str | None = None
     description: str | None = None
+
+
+class CustomDatasetCreate(BaseModel):
+    """Dataset nuevo generado desde un base de secuencias con params a medida
+    (pestaña Datasets): el recorrido queda congelado en su definición."""
+    base: str
+    params: dict = Field(default_factory=dict)
+    split: str = "train"
+    seed: int = 42
+    limit: int | None = None   # vacío = todas las muestras del split
+    name: str | None = None
+    description: str = ""
 
 
 class LabelPatch(BaseModel):
@@ -412,6 +424,16 @@ def api_eval_stop(eval_id: str):
 @app.get("/api/custom-datasets")
 def api_custom_list():
     return data_registry.custom_store.list()
+
+
+@app.post("/api/custom-datasets")
+def api_custom_create(req: CustomDatasetCreate):
+    """Genera un dataset desde un base de secuencias con los params dados (pestaña
+    Datasets): mismas muestras de MNIST, otro recorrido/grosor, congelado."""
+    created = _400(data_registry.create_custom_from_base, req.base, req.params,
+                   req.split, req.seed, req.limit, req.name, req.description)
+    inference.clear_caches()
+    return created
 
 
 def _custom_dataset_refs(name: str) -> list[str]:
