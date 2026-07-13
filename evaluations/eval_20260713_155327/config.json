@@ -1,0 +1,9 @@
+{
+  "experiment": "exp_20260713_153026_features_cnn",
+  "nn": "features_cnn",
+  "dataset": "fallos-test",
+  "dataset_is_custom": true,
+  "split": "train",
+  "limit": null,
+  "ambiguous_threshold": 0.2
+}

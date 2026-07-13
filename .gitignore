@@ -225,3 +225,6 @@ __marimo__/
 backups/
 # Checkpoints de modelos (el registro config/métricas/estado sí se versiona)
 experiments/*/checkpoints/
+# Resultados por muestra de las evaluaciones (voluminosos y regenerables;
+# config.json y status.json de cada evaluación sí se versionan)
+evaluations/*/results.jsonl

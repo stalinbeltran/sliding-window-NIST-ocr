@@ -1,0 +1,9 @@
+{
+  "experiment": "exp_20260713_153026_features_cnn",
+  "nn": "features_cnn",
+  "dataset": "mnist",
+  "dataset_is_custom": false,
+  "split": "test",
+  "limit": null,
+  "ambiguous_threshold": 0.2
+}

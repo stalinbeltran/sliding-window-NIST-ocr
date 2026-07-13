@@ -113,6 +113,11 @@ def map_payload(array: np.ndarray, index: int) -> dict[str, Any]:
 # --- API de inferencia -----------------------------------------------------
 
 
+def sample_thumb(name: str, *, split: str, index: int) -> str:
+    dataset = get_dataset(name, train=(split == "train"))
+    return png_data_uri(dataset.display_item(index))
+
+
 def dataset_samples(
     name: str, *, split: str = "test", offset: int = 0, limit: int = 24
 ) -> dict[str, Any]:

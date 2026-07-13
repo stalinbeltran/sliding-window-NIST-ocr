@@ -6,12 +6,15 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from swnist.data.registry import DATASETS, effective_params
+from swnist.data.registry import dataset_info, effective_params
 from swnist.models.features_cnn import ACTIVATIONS, POOL_TYPES, LayerSpec, spatial_trace
 from swnist.nn_registry import NNS
 
 MAX_KERNEL_SIZE = 28
 MAX_LAYERS = 8
+
+OUTCOMES = ("all", "correct", "failed", "ambiguous")
+DEFAULT_AMBIGUOUS_THRESHOLD = 0.2
 
 
 class ValidationError(ValueError):
@@ -154,11 +157,10 @@ def validate_training(training: Any) -> dict[str, Any]:
 def validate_dataset(nn: str, dataset_cfg: Any) -> dict[str, Any]:
     _require(isinstance(dataset_cfg, dict), "'dataset' debe ser un objeto JSON con 'name'.")
     name = dataset_cfg.get("name")
-    _require(
-        name in DATASETS,
-        f"dataset '{name}' desconocido. Disponibles: {sorted(DATASETS)}.",
-    )
-    info = DATASETS[name]
+    try:
+        info = dataset_info(name)
+    except KeyError as exc:
+        raise ValidationError(str(exc).strip("'")) from exc
     _require(
         nn in info["nns"],
         f"el dataset '{name}' no es compatible con la NN '{nn}'. "
@@ -167,6 +169,11 @@ def validate_dataset(nn: str, dataset_cfg: Any) -> dict[str, Any]:
     params = dataset_cfg.get("params") or {}
     _require(isinstance(params, dict), "'dataset.params' debe ser un objeto JSON.")
     unknown = sorted(set(params) - set(info["defaults"]))
+    if unknown and info["is_custom"]:
+        raise ValidationError(
+            f"el dataset custom '{name}' no acepta parámetros {unknown}: sus muestras ya "
+            "están fijadas por índice. Crea otro dataset si necesitas otras."
+        )
     _require(
         not unknown,
         f"el dataset '{name}' no acepta el/los parámetro(s) {unknown}. "
@@ -231,3 +238,90 @@ def validate_train_config(
         "seed": seed,
         "init_from": init_from,
     }
+
+
+# --- evaluaciones ----------------------------------------------------------
+
+
+def validate_eval_config(
+    config: dict[str, Any], *, experiment: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Valida una evaluación ANTES de crearla: NN entrenada + dataset compatible."""
+    _require(isinstance(config, dict), "la config de la evaluación debe ser un objeto JSON.")
+    exp_id = config.get("experiment")
+    _require(
+        experiment is not None,
+        f"el experimento '{exp_id}' no existe: no hay ninguna NN que probar.",
+    )
+    _require(
+        experiment.get("has_checkpoint", False),
+        f"el experimento '{exp_id}' no tiene checkpoint 'best.pt': entrénalo (al menos "
+        "una época completa) antes de probarlo.",
+    )
+    nn = experiment["config"]["nn"]
+
+    name = config.get("dataset") or experiment["config"]["dataset"]["name"]
+    try:
+        info = dataset_info(name)
+    except KeyError as exc:
+        raise ValidationError(str(exc).strip("'")) from exc
+    _require(
+        nn in info["nns"],
+        f"el dataset '{name}' no es compatible con la NN '{nn}' del experimento "
+        f"'{exp_id}'. Compatible con: {info['nns']}.",
+    )
+
+    split = config.get("split", "test")
+    _require(
+        split in ("train", "test"),
+        f"split '{split}' inválido: debe ser 'train' o 'test'.",
+    )
+
+    limit = config.get("limit")
+    if limit is not None:
+        limit = _positive_int(limit, "limit")
+
+    threshold = config.get("ambiguous_threshold", DEFAULT_AMBIGUOUS_THRESHOLD)
+    _require(
+        isinstance(threshold, (int, float))
+        and not isinstance(threshold, bool)
+        and 0.0 < float(threshold) <= 1.0,
+        f"'ambiguous_threshold' debe estar en (0, 1], se recibió {threshold!r}. "
+        "Es el margen (p1 − p2) por debajo del cual una predicción se considera ambigua.",
+    )
+
+    return {
+        "experiment": exp_id,
+        "nn": nn,
+        "dataset": name,
+        "dataset_is_custom": info["is_custom"],
+        "split": split,
+        "limit": limit,
+        "ambiguous_threshold": float(threshold),
+    }
+
+
+def validate_filter(raw: Any, *, num_classes: int = 10) -> dict[str, Any]:
+    """Filtro de resultados: por resultado (acierto/fallo/ambigua) y por clases."""
+    raw = raw or {}
+    _require(isinstance(raw, dict), "'filter' debe ser un objeto JSON.")
+
+    outcome = raw.get("outcome", "all")
+    _require(
+        outcome in OUTCOMES,
+        f"'outcome' inválido: {outcome!r}. Debe ser uno de {list(OUTCOMES)}.",
+    )
+
+    clean: dict[str, Any] = {"outcome": outcome, "label": None, "pred": None}
+    for field in ("label", "pred"):
+        value = raw.get(field)
+        if value is None or value == "":
+            continue
+        value = _positive_int(
+            int(value) if isinstance(value, str) and value.isdigit() else value,
+            field,
+            minimum=0,
+            maximum=num_classes - 1,
+        )
+        clean[field] = value
+    return clean

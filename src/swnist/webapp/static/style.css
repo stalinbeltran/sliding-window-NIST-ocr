@@ -112,3 +112,31 @@ canvas#live-chart { width: 100%; background: var(--panel-2); border: 1px solid v
 .matrix-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
 table.matrix { border-collapse: collapse; font-family: Consolas, monospace; font-size: 10px; }
 table.matrix td { border: 1px solid var(--line); padding: 2px 4px; text-align: right; min-width: 34px; }
+
+/* --- Probar: evaluaciones --- */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-top: 14px; }
+
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 110px;
+}
+.stat b { font-size: 18px; }
+.stat span { font-size: 11px; color: var(--muted); }
+
+table.grid.confusion { width: auto; }
+table.grid.confusion td, table.grid.confusion th { text-align: center; min-width: 34px; padding: 4px 6px; }
+table.grid.confusion td.cell { cursor: pointer; }
+table.grid.confusion td.cell:hover { outline: 2px solid var(--accent); }
+
+.sample.ok { border-color: rgba(61, 220, 132, .5); }
+.sample.bad { border-color: rgba(255, 107, 107, .6); }
+.sample .muted { font-size: 10px; }
+
+td.origin { font-size: 11px; color: var(--muted); max-width: 340px; word-break: break-word; }
+td.actions { white-space: nowrap; }
+td.actions button { margin-right: 4px; }

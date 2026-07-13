@@ -63,6 +63,31 @@ verlos como **matrices** y probarlos gráficamente sobre caracteres del propio d
     preseleccionan el último experimento entrenado.
 17. **Consola Windows**: la salida por consola es cp1252. Cualquier CLI del proyecto debe
     forzar UTF-8 (`sys.stdout.reconfigure`) o una etiqueta con acentos rompe el listado.
+18. **Evaluaciones**: se lanzan desde la web app (Experimentos → **probar**, o la pestaña
+    Probar) aplicando una NN entrenada a un dataset compatible + split + límite opcional.
+    Registro en `evaluations/<eval_id>/`: `config.json`, `status.json` (resumen + matriz de
+    confusión) y `results.jsonl` (una línea por muestra: `index`, `base_index`, `label`,
+    `pred`, `conf`, `margin`, `correct`, `ambiguous`; git-ignored). `margin = p1 − p2`;
+    «ambigua» = `margin < ambiguous_threshold` (0.2 por defecto). Los resultados se filtran
+    por **resultado** (todas / aciertos / fallos / ambiguas) y por **clase** (etiqueta real
+    y/o predicción) — la matriz de confusión es clicable y fija ese filtro.
+    API: `POST/GET /api/evaluations`, `GET /api/evaluations/<id>/results` (filtros,
+    paginado, miniaturas PNG). No se puede eliminar un experimento con evaluaciones (409).
+19. **Datasets custom**: un dataset custom es una **definición** (`custom_datasets/<nombre>.json`:
+    base + split + índices + origen), no una copia de las imágenes. Dos orígenes:
+    - **filtro de una evaluación** (`from_evaluation`): las muestras que cumplen el filtro
+      (p. ej. «los fallos del 7»);
+    - **recorte de un base** (`from_base`): las primeras N muestras de un split.
+    Semántica al construirlo: `train=True` → el subconjunto guardado; `train=False` → el
+    test completo del base (el `final_test` del entrenamiento). **No acepta params** (sus
+    muestras ya están fijadas por índice → 400 con razón). Hereda la compatibilidad de NN
+    de su base, así que sirve para entrenar y para volver a evaluar. CRUD completo por
+    API/UI (`/api/custom-datasets`); renombrar/eliminar se bloquea (409 con razón) si un
+    experimento o una evaluación lo referencia por nombre.
+    **Ojo con los índices**: los de la definición son índices del **base**, no del
+    subconjunto. Por eso cada resultado de evaluación guarda `base_index` además de
+    `index` — así, al filtrar la evaluación de un dataset custom, el dataset resultante
+    sigue apuntando a las muestras correctas del base (`evaluation/runner.resolve_base`).
 
 ## Arquitectura
 
@@ -86,11 +111,14 @@ verlos como **matrices** y probarlos gráficamente sobre caracteres del propio d
 - El tamaño espacial se calcula capa a capa (`spatial_trace`): si un conv o un pooling no
   cabe, se rechaza antes de entrenar (regla 13).
 
-### Dataset
-- `mnist` (`src/swnist/data/datasets.py`): imágenes 28×28 en [0, 1] + etiqueta 0-9.
-  Único parámetro: `limit` (usar solo las primeras N muestras del split; útil para pruebas
-  rápidas). La exploración de muestras y el predict usan siempre el split completo — el
-  `limit` solo recorta el conjunto de entrenamiento.
+### Datasets
+- **Builtin** `mnist` (`src/swnist/data/datasets.py`): imágenes 28×28 en [0, 1] + etiqueta
+  0-9. Único parámetro: `limit` (usar solo las primeras N muestras del split; útil para
+  pruebas rápidas). La exploración de muestras y el predict usan siempre el split completo
+  — el `limit` solo recorta el conjunto de entrenamiento.
+- **Custom** (`src/swnist/data/custom.py`): subconjuntos guardados (regla 19). El catálogo
+  (`data/registry.py`) mezcla ambos y declara la compatibilidad con cada NN; el store de
+  customs se redirige con `registry.configure(dir)` (la web app y los tests lo usan).
 
 ### Visualización de los features
 - `GET /api/datasets/<name>/samples` → miniaturas PNG (base64; encoder propio en
@@ -112,27 +140,35 @@ scripts/run_webapp.py      ← lanza la web app (uvicorn, puerto 8000)
 src/swnist/
   repro.py                 ← semillas y captura de entorno
   nn_registry.py           ← catálogo de NNs entrenables + config por defecto
-  validation.py            ← validación previa de la config (razones claras, 400)
+  validation.py            ← validación previa de configs y filtros (razones claras, 400)
   data/
     datasets.py            ← MnistDigits
-    registry.py            ← catálogo de datasets + compatibilidad por NN
+    builtin.py             ← catálogo de datasets builtin
+    custom.py              ← datasets custom: CustomDatasetStore (CRUD) + CustomSubset
+    registry.py            ← catálogo (builtin + custom) + compatibilidad por NN
   models/
     features_cnn.py        ← la CNN configurable + feature_maps() + kernels()
   training/
     common.py              ← split train/val, loaders reproducibles, checkpoints, init_from
     train_features_cnn.py  ← bucle de entrenamiento, métricas, backup
+  evaluation/
+    registry.py            ← registro de evaluaciones + filtros de resultados
+    runner.py              ← aplica una NN entrenada a un dataset, resultado por muestra
   experiments/
     registry.py            ← crear/listar/leer experimentos, métricas, CRUD
     backup.py              ← respaldo a backups/ (git-ignored)
   webapp/
     main.py                ← FastAPI: API + estáticos
-    manager.py             ← jobs de entrenamiento en hilos, con stop
+    manager.py             ← jobs (entrenamientos y evaluaciones) en hilos, con stop
     inference.py           ← miniaturas PNG, predict con feature maps, kernels (con caché)
     static/                ← index.html, app.js, style.css (sin CDNs; pestañas
-                             Entrenar / Experimentos / Features)
-tests/                     ← pytest: modelo, validación, dataset, registro, entrenamiento
-                             e2e, re-entrenamiento, extracción de features y API completa
+                             Entrenar / Experimentos / Probar / Datasets / Features)
+tests/                     ← pytest: modelo, validación, datasets (builtin y custom),
+                             registro, entrenamiento e2e, re-entrenamiento, evaluaciones,
+                             extracción de features y API completa
 experiments/               ← registro versionado (checkpoints/ va git-ignored)
+evaluations/               ← registro de evaluaciones (results.jsonl git-ignored)
+custom_datasets/           ← datasets custom versionados (base + split + índices)
 backups/                   ← git-ignored, copia íntegra de cada experimento
 data/                      ← git-ignored, descarga de MNIST (torchvision)
 ```
@@ -161,9 +197,12 @@ Los ids tienen la forma `exp_YYYYMMDD_HHMMSS_<nn>`.
 ```
 
 Flujo típico: **Entrenar** (elegir dataset, editar la arquitectura en el JSON, ver las
-métricas en vivo) → **Experimentos** (renombrar/duplicar/eliminar/re-entrenar) →
-**Features** (elegir la NN entrenada y un carácter del dataset, ver sus feature maps y la
-matriz de cualquiera de ellos, o los kernels aprendidos).
+métricas en vivo) → **Experimentos** (probar / features / renombrar / duplicar /
+re-entrenar / eliminar) → **Probar** (evaluar la NN sobre un dataset, ver la matriz de
+confusión, filtrar por clase y por resultado, y guardar el filtro como dataset nuevo) →
+**Datasets** (CRUD: crear recortando un base, renombrar, eliminar, ver muestras) →
+**Features** (elegir la NN entrenada y un carácter, ver sus feature maps y la matriz de
+cualquiera de ellos, o los kernels aprendidos).
 
 ## Convenciones de entrenamiento
 
