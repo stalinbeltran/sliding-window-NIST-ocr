@@ -274,6 +274,14 @@ ventanas deslizantes, con dos redes neuronales cooperantes.
     (`Secuenciador.from_config`), en vez de cargar en silencio y dar métricas basura.
     Los dimensionadores se reutilizan tal cual.
 
+27. **Lo más reciente primero** (2026-07-12): `list_experiments` y `list_evaluations`
+    devuelven la lista ordenada del más nuevo al más viejo (el id lleva el timestamp →
+    orden lexicográfico inverso). Como los desplegables de la web app (dimensionador
+    del secuenciador, `init_from`, NN a evaluar en Probar) se llenan con esa lista y el
+    navegador preselecciona la primera opción, el default pasa a ser el último
+    experimento entrenado —el que casi siempre se quiere— en vez del más antiguo. Las
+    tablas de experimentos y evaluaciones quedan igualmente con lo último arriba.
+
 ## Arquitectura
 
 Dos redes neuronales:

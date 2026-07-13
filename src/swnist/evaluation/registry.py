@@ -65,8 +65,10 @@ class EvaluationRegistry:
                     f.write(json.dumps(r) + "\n")
 
     def list_evaluations(self, experiment: str | None = None) -> list[dict]:
+        # Más reciente primero (el id lleva el timestamp), igual que los
+        # experimentos: lo último que corriste queda arriba.
         out = []
-        for d in sorted(self.root.iterdir()):
+        for d in sorted(self.root.iterdir(), reverse=True):
             if not d.is_dir() or not (d / "config.json").exists():
                 continue
             info = self.get_evaluation(d.name)

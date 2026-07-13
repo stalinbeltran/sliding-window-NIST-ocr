@@ -121,8 +121,11 @@ class ExperimentRegistry:
     # ---------- lectura ----------
 
     def list_experiments(self, nn: str | None = None, status: str | None = None) -> list[dict]:
+        # Más reciente primero: el id lleva el timestamp, así que basta con
+        # invertir el orden lexicográfico. Los desplegables de la web app se
+        # llenan con esta lista y preseleccionan la primera opción.
         out = []
-        for d in sorted(self.root.iterdir()):
+        for d in sorted(self.root.iterdir(), reverse=True):
             if not d.is_dir() or not (d / "config.json").exists():
                 continue
             info = self.get_experiment(d.name)
