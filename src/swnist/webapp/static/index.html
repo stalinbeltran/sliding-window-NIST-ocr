@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>CNN de features — MNIST</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>CNN de features · MNIST</h1>
+    <nav id="tabs">
+      <button class="tab active" data-tab="entrenar">Entrenar</button>
+      <button class="tab" data-tab="experimentos">Experimentos</button>
+      <button class="tab" data-tab="features">Features</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ENTRENAR -->
+    <section id="tab-entrenar" class="tab-panel active">
+      <div class="cols">
+        <div class="col">
+          <h2>Configuración</h2>
+          <div class="row">
+            <label>Red neuronal
+              <select id="nn-select"></select>
+            </label>
+            <label>Dataset
+              <select id="dataset-select"></select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Nombre del experimento
+              <input id="label-input" type="text" placeholder="(opcional)">
+            </label>
+            <label>Re-entrenar desde (init_from)
+              <select id="initfrom-select"></select>
+            </label>
+          </div>
+          <p class="hint" id="nn-desc"></p>
+          <p class="hint">
+            La arquitectura se edita aquí: <code>model.layers</code> es la lista de capas
+            (una por capa convolucional). Cada capa declara sus <code>kernels</code>
+            (nº de filtros), su <code>kernel_size</code>, y su <code>pool</code>
+            (<code>null</code> = sin pooling). Con <code>init_from</code> la arquitectura
+            la dicta el experimento origen.
+          </p>
+          <textarea id="config-json" spellcheck="false" rows="28"></textarea>
+          <div class="row">
+            <button id="btn-train" class="primary">Entrenar</button>
+            <button id="btn-reset">Restaurar defaults</button>
+            <button id="btn-add-layer">+ capa</button>
+            <button id="btn-remove-layer">− capa</button>
+          </div>
+          <p id="train-error" class="error"></p>
+        </div>
+
+        <div class="col">
+          <h2>Entrenamiento en vivo</h2>
+          <div id="live-header" class="muted">Sin entrenamiento activo.</div>
+          <div class="row">
+            <button id="btn-stop" disabled>Detener</button>
+          </div>
+          <canvas id="live-chart" width="520" height="240"></canvas>
+          <table class="grid" id="epochs-table">
+            <thead>
+              <tr><th>Época</th><th>train loss</th><th>train acc</th><th>val loss</th><th>val acc</th><th>s</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- EXPERIMENTOS -->
+    <section id="tab-experimentos" class="tab-panel">
+      <h2>Experimentos <span class="muted">(lo más reciente primero)</span></h2>
+      <table class="grid" id="experiments-table">
+        <thead>
+          <tr>
+            <th>Nombre</th><th>id</th><th>estado</th><th>arquitectura</th>
+            <th>val acc</th><th>test acc</th><th>acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- FEATURES -->
+    <section id="tab-features" class="tab-panel">
+      <h2>Features reconocidos</h2>
+      <div class="row">
+        <label>Experimento (NN entrenada)
+          <select id="feat-exp"></select>
+        </label>
+        <label>Dataset
+          <select id="feat-dataset"></select>
+        </label>
+        <label>Split
+          <select id="feat-split">
+            <option value="test">test</option>
+            <option value="train">train</option>
+          </select>
+        </label>
+        <label>Desde el índice
+          <input id="feat-offset" type="number" value="0" min="0" step="24">
+        </label>
+        <button id="btn-samples">Ver caracteres</button>
+        <button id="btn-kernels">Ver kernels aprendidos</button>
+      </div>
+      <p class="hint">
+        Elige un carácter del dataset: la CNN lo procesa y se muestran los feature maps de
+        cada capa (la respuesta de cada kernel). Click en un mapa → su representación
+        matricial completa (los números).
+      </p>
+      <p id="feat-error" class="error"></p>
+
+      <div id="samples" class="samples"></div>
+      <div id="prediction"></div>
+      <div id="layers"></div>
+      <div id="matrix-panel"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

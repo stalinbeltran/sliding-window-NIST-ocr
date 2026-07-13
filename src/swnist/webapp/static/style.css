@@ -1,0 +1,114 @@
+:root {
+  --bg: #10131a;
+  --panel: #171b24;
+  --panel-2: #1e2430;
+  --line: #2c3444;
+  --text: #e6e9ef;
+  --muted: #8b95a7;
+  --accent: #4da3ff;
+  --ok: #3ddc84;
+  --err: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+h1 { font-size: 17px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+h3 { font-size: 13px; margin: 16px 0 6px; }
+
+nav { display: flex; gap: 6px; }
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: #08131f; border-color: var(--accent); font-weight: 600; }
+button.tab.active { background: var(--accent); color: #08131f; border-color: var(--accent); }
+button.mini { padding: 2px 7px; font-size: 12px; }
+
+main { padding: 18px 20px 60px; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.cols { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.col { flex: 1 1 480px; min-width: 380px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+
+.row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+select, input, textarea {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+textarea { width: 100%; font-family: Consolas, monospace; font-size: 12px; }
+
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.muted { color: var(--muted); }
+.error { color: var(--err); white-space: pre-wrap; min-height: 18px; }
+code { background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
+
+table.grid { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+table.grid th, table.grid td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+table.grid th { background: var(--panel-2); color: var(--muted); font-weight: 600; }
+
+canvas#live-chart { width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+
+.samples { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.sample {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+.sample:hover { border-color: var(--accent); }
+.sample.selected { border-color: var(--ok); }
+.sample img { width: 46px; height: 46px; image-rendering: pixelated; display: block; }
+.sample span { font-size: 10px; color: var(--muted); }
+
+.pred-box { display: flex; gap: 16px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 12px 0; }
+.pred-box img { width: 84px; height: 84px; image-rendering: pixelated; border: 1px solid var(--line); }
+.pred-ok { color: var(--ok); font-weight: 600; }
+.pred-bad { color: var(--err); font-weight: 600; }
+
+.layer { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.maps { display: flex; flex-wrap: wrap; gap: 8px; }
+.map { text-align: center; cursor: pointer; padding: 3px; border: 1px solid transparent; border-radius: 6px; }
+.map:hover { border-color: var(--accent); }
+.map.selected { border-color: var(--ok); }
+.map canvas { image-rendering: pixelated; border: 1px solid var(--line); display: block; }
+.map span { font-size: 10px; color: var(--muted); }
+
+.matrix-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+table.matrix { border-collapse: collapse; font-family: Consolas, monospace; font-size: 10px; }
+table.matrix td { border: 1px solid var(--line); padding: 2px 4px; text-align: right; min-width: 34px; }

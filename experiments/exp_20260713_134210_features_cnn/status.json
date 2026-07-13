@@ -1,0 +1,48 @@
+{
+  "id": "exp_20260713_134210_features_cnn",
+  "label": "cnn 3 capas (8@5x5 -> 16@3x3 -> 24@3x3)",
+  "nn": "features_cnn",
+  "status": "completed",
+  "created_at": "2026-07-13T18:42:10+00:00",
+  "started_at": "2026-07-13T13:42:10",
+  "finished_at": "2026-07-13T13:44:24",
+  "best": {
+    "epoch": 3,
+    "val_acc": 0.9746666666666667,
+    "val_loss": 0.08084036469459534
+  },
+  "final_test": {
+    "loss": 0.06376783355781808,
+    "acc": 0.9784
+  },
+  "error": null,
+  "device": "cpu",
+  "num_params": 80834,
+  "layer_shapes": [
+    {
+      "layer": 1,
+      "kernels": 8,
+      "kernel_size": 5,
+      "conv_size": 28,
+      "out_size": 14,
+      "pooled": true
+    },
+    {
+      "layer": 2,
+      "kernels": 16,
+      "kernel_size": 3,
+      "conv_size": 14,
+      "out_size": 14,
+      "pooled": false
+    },
+    {
+      "layer": 3,
+      "kernels": 24,
+      "kernel_size": 3,
+      "conv_size": 14,
+      "out_size": 7,
+      "pooled": true
+    }
+  ],
+  "epochs_done": 3
+}

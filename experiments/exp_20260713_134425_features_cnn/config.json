@@ -1,0 +1,59 @@
+{
+  "nn": "features_cnn",
+  "dataset": {
+    "name": "mnist",
+    "params": {
+      "limit": null
+    }
+  },
+  "model": {
+    "input_size": 28,
+    "in_channels": 1,
+    "num_classes": 10,
+    "hidden_dim": 64,
+    "dropout": 0.0,
+    "layers": [
+      {
+        "kernels": 8,
+        "kernel_size": 5,
+        "stride": 1,
+        "padding": 2,
+        "activation": "relu",
+        "pool": {
+          "type": "max",
+          "size": 2,
+          "stride": null
+        }
+      },
+      {
+        "kernels": 16,
+        "kernel_size": 3,
+        "stride": 1,
+        "padding": 1,
+        "activation": "relu",
+        "pool": null
+      },
+      {
+        "kernels": 24,
+        "kernel_size": 3,
+        "stride": 1,
+        "padding": 1,
+        "activation": "relu",
+        "pool": {
+          "type": "max",
+          "size": 2,
+          "stride": null
+        }
+      }
+    ]
+  },
+  "training": {
+    "epochs": 2,
+    "batch_size": 128,
+    "lr": 0.0003,
+    "val_fraction": 0.1,
+    "log_every": 50
+  },
+  "seed": 1234,
+  "init_from": "exp_20260713_134210_features_cnn"
+}

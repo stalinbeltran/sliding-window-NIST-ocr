@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swnist"
-version = "0.1.0"
-description = "Sliding-window NIST/MNIST OCR: dimensionador (CNN) + secuenciador (RNN retroalimentada)"
+version = "0.2.0"
+description = "CNN configurable sobre MNIST: entrenamiento desde la web app y visualizacion matricial de sus features"
 requires-python = ">=3.12"
 dependencies = [
     "torch>=2.13",
