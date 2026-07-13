@@ -125,7 +125,40 @@
       </table>
     </section>
 
+
+
+
+
     <section class="panel" id="panel-results" hidden>
+
+      <section class="panel" id="panel-sample" hidden>
+        <h2>Muestra <span id="sample-title"></span></h2>
+        <div class="sample-layout">
+          <div>
+            <canvas id="sample-canvas" width="280" height="280"></canvas>
+            <div class="btn-row anim-controls" id="anim-controls" hidden>
+              <button id="anim-play" class="small">▶ Reproducir</button>
+              <button id="anim-prev" class="small secondary">⏮</button>
+              <button id="anim-next" class="small secondary">⏭</button>
+              <span id="anim-step" class="hint"></span>
+            </div>
+            <p id="sample-verdict"></p>
+            <p id="trace-reason" class="hint"></p>
+          </div>
+          <div>
+            <h3>Salida (paso actual)</h3>
+            <div id="probs-bars"></div>
+          </div>
+          <div id="trace-chart-box" hidden>
+            <h3>Salida por paso del deslizamiento</h3>
+            <canvas id="chart-trace" width="460" height="280"></canvas>
+            <p class="hint" id="trace-legend"></p>
+          </div>
+        </div>
+      </section>
+
+
+
       <h2 id="results-title">Resultados</h2>
       <p id="results-summary" class="hint"></p>
 
@@ -168,31 +201,6 @@
       <p class="hint">Haz click en una muestra para aplicarla a la NN y ver su salida.</p>
     </section>
 
-    <section class="panel" id="panel-sample" hidden>
-      <h2>Muestra <span id="sample-title"></span></h2>
-      <div class="sample-layout">
-        <div>
-          <canvas id="sample-canvas" width="280" height="280"></canvas>
-          <div class="btn-row anim-controls" id="anim-controls" hidden>
-            <button id="anim-play" class="small">▶ Reproducir</button>
-            <button id="anim-prev" class="small secondary">⏮</button>
-            <button id="anim-next" class="small secondary">⏭</button>
-            <span id="anim-step" class="hint"></span>
-          </div>
-          <p id="sample-verdict"></p>
-          <p id="trace-reason" class="hint"></p>
-        </div>
-        <div>
-          <h3>Salida (paso actual)</h3>
-          <div id="probs-bars"></div>
-        </div>
-        <div id="trace-chart-box" hidden>
-          <h3>Salida por paso del deslizamiento</h3>
-          <canvas id="chart-trace" width="460" height="280"></canvas>
-          <p class="hint" id="trace-legend"></p>
-        </div>
-      </div>
-    </section>
   </main>
 
   <!-- ==================== DATASETS ==================== -->
