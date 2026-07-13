@@ -1,8 +1,0 @@
-{
-  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
-  "platform": "Windows-11-10.0.22621-SP0",
-  "torch": "2.13.0+cpu",
-  "cuda_available": false,
-  "device_name": "cpu",
-  "git_commit": "ee97474349ac21f54e48ba7a1fda1ea67fa3f6ab"
-}

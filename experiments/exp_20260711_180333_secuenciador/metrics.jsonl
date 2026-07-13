@@ -1,4 +1,0 @@
-{"type": "batch", "epoch": 1, "step": 50, "loss": 1.8232, "acc": 0.36719}
-{"type": "batch", "epoch": 1, "step": 100, "loss": 1.43418, "acc": 0.67188}
-{"type": "batch", "epoch": 1, "step": 150, "loss": 1.20921, "acc": 0.79688}
-{"type": "batch", "epoch": 1, "step": 200, "loss": 1.2244, "acc": 0.78906}
