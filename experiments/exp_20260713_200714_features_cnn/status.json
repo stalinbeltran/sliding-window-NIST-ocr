@@ -1,0 +1,40 @@
+{
+  "id": "exp_20260713_200714_features_cnn",
+  "label": "exp_20260713_200714_features_cnn",
+  "nn": "features_cnn",
+  "status": "stopped",
+  "created_at": "2026-07-14T01:07:14+00:00",
+  "started_at": "2026-07-13T20:07:14",
+  "finished_at": "2026-07-13T20:07:21",
+  "best": null,
+  "final_test": null,
+  "error": null,
+  "device": "cpu",
+  "num_params": 20490,
+  "layer_shapes": [
+    {
+      "layer": 1,
+      "kernels": 16,
+      "kernel_size": 7,
+      "conv_size": 24,
+      "out_size": 12,
+      "pooled": true
+    },
+    {
+      "layer": 2,
+      "kernels": 16,
+      "kernel_size": 7,
+      "conv_size": 8,
+      "out_size": 4,
+      "pooled": true
+    },
+    {
+      "layer": 3,
+      "kernels": 16,
+      "kernel_size": 3,
+      "conv_size": 4,
+      "out_size": 2,
+      "pooled": true
+    }
+  ]
+}
